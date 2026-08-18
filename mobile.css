@@ -1,0 +1,54 @@
+@media (max-width: 600px) {
+  .sidebar.mobile-open {
+    display: flex;
+    width: 252px;
+    padding: 29px 17px 20px;
+    box-shadow: 18px 0 45px rgba(25, 25, 22, .2);
+  }
+
+  .sidebar.mobile-open .brand { margin: 0 12px 40px; }
+  .sidebar.mobile-open .brand > span:last-child { display: block; }
+  .sidebar.mobile-open .nav-link { font-size: 13px; justify-content: flex-start; padding: 0 13px; gap: 14px; }
+  .sidebar.mobile-open .nav-count { position: static; margin-left: auto; font-size: 10px; }
+  .sidebar.mobile-open .student-profile > div:not(.avatar),
+  .sidebar.mobile-open .student-profile .more { display: block; }
+}
+
+.onboarding-modal {
+  position: relative;
+  width: min(100%, 455px);
+  min-height: 495px;
+  padding: 32px 36px;
+  border-radius: 20px;
+  background: #fbfbf8;
+  box-shadow: 0 22px 70px rgba(15, 15, 12, .25);
+}
+
+.onboarding-brand { margin: 0; font-size: 22px; }
+.onboarding-brand .brand-mark { transform: scale(.84); transform-origin: left center; margin-right: -4px; }
+.onboarding-dots { display: flex; gap: 5px; margin: 27px 0 36px; }
+.onboarding-dots i { width: 20px; height: 3px; border-radius: 5px; background: #e6e4dd; }
+.onboarding-dots i.active { background: #6b60cc; }
+.onboarding-step { display: none; min-height: 264px; }
+.onboarding-step.active { display: block; }
+.onboarding-step h2 { margin: 7px 0 11px; font: 600 35px/1.05 Newsreader, Georgia, serif; letter-spacing: -.9px; }
+.onboarding-step h2 em { color: #685ccd; font-weight: 500; }
+.onboarding-step > p:not(.eyebrow) { margin: 0; color: #77756e; font-size: 11px; line-height: 1.65; }
+.onboarding-field { display: grid; gap: 6px; margin-top: 31px; color: #79766e; font-size: 10px; }
+.onboarding-field input { width: 100%; border: 0; border-bottom: 1px solid #bdbab0; background: transparent; padding: 7px 0; outline: 0; color: #373631; font: 600 18px Manrope, sans-serif; }
+.onboarding-field input:focus { border-color: #675bcb; }
+.subject-choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 22px; }
+.subject-choice-grid button { height: 47px; border: 1px solid #e4e2dc; border-radius: 9px; background: #fff; display: flex; align-items: center; gap: 8px; padding: 7px; font-size: 11px; font-weight: 700; text-align: left; }
+.subject-choice-grid button.chosen { border-color: #d3ceef; background: #fbfaff; }
+.subject-choice-grid .subject-orb { width: 29px; height: 29px; font-size: 13px; }
+.add-choice { display: grid; place-items: center; width: 29px; height: 29px; border-radius: 50%; background: #f0efeb; color: #77746c; font-size: 17px; font-weight: 400; }
+.availability { margin-top: 25px; border-radius: 11px; background: #efede4; padding: 17px; }
+.availability span { display: block; color: #77746e; font-size: 10px; }
+.availability strong { display: block; margin: 5px 0 7px; font-size: 18px; letter-spacing: -.5px; }
+.availability small { color: #8c8981; font-size: 9px; }
+.onboarding-next { margin-top: 3px; }
+
+@media (max-width: 600px) {
+  .onboarding-modal { min-height: 480px; padding: 28px 23px; }
+  .onboarding-step h2 { font-size: 31px; }
+}
