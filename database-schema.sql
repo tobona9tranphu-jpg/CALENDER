@@ -1,4 +1,4 @@
--- PostgreSQL-ready data model for the Luma backend.
+-- PostgreSQL-ready data model for the TB backend.
 -- UUID generation and timestamps may be supplied by the hosting platform.
 
 CREATE TABLE users (

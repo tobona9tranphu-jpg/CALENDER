@@ -27,5 +27,5 @@ http.createServer((request, response) => {
     response.end(file);
   });
 }).listen(4173, '127.0.0.1', () => {
-  console.log('Luma is ready at http://127.0.0.1:4173');
+  console.log('TB is ready at http://127.0.0.1:4173');
 });
