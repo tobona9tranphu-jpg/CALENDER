@@ -1,12 +1,25 @@
 const $ = (selector, scope = document) => scope.querySelector(selector);
 const $$ = (selector, scope = document) => [...scope.querySelectorAll(selector)];
-const STORAGE = { accounts: 'TB-demo-accounts-v2', current: 'TB-demo-current-user-v2' };
+const API = '/api';
+const TOKEN_KEY = 'TB-auth-token';
+function getToken() { return localStorage.getItem(TOKEN_KEY); }
+function setToken(t) { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); }
+async function api(method, path, body = null) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  const token = getToken();
+  if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(API + path, opts);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Lỗi server');
+  return data;
+}
 function getToday() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
 let TODAY = getToday();
 let scheduleViewDate = TODAY;
 let calendarMonth = new Date().getMonth();
 let calendarYear = new Date().getFullYear();
-const DEMO_EMAIL = 'minhanh@TB.demo';
+const DEMO_EMAIL = 'minhanh@tb.demo';
 const DEMO_PASSWORD = 'demo123';
 const dayNames = ['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy'];
 
@@ -89,14 +102,19 @@ function seedAccount() {
   };
 }
 
-function blankAccount({ id, email, password, name }) {
-  return { id, email, password, onboarded: false, profile: { name, grade: '', goal: '', timezone: 'Asia/Ho_Chi_Minh' }, availability: { start: '15:00', end: '21:00', days: [1, 2, 3, 4, 5] }, settings: { reminders: true, coach: true }, subjects: [], tasks: [], fixedSchedules: [], sessions: [], reviewSchedules: [], lastSimulation: null, scheduleChanges: [] };
+function blankAccount({ id, email, name }) {
+  return { id, email, onboarded: false, profile: { name, grade: '', goal: '', timezone: 'Asia/Ho_Chi_Minh' }, availability: { start: '15:00', end: '21:00', days: [1, 2, 3, 4, 5] }, settings: { reminders: true, coach: true }, subjects: [], tasks: [], fixedSchedules: [], sessions: [], reviewSchedules: [], lastSimulation: null, scheduleChanges: [] };
 }
 
-function accounts() { return JSON.parse(localStorage.getItem(STORAGE.accounts) || '[]'); }
-function setAccounts(value) { localStorage.setItem(STORAGE.accounts, JSON.stringify(value)); }
-function ensureSeed() { if (!accounts().length) setAccounts([seedAccount()]); }
-function persist() { const values = accounts(); const index = values.findIndex(account => account.id === currentUser.id); if (index >= 0) values[index] = currentUser; else values.push(currentUser); setAccounts(values); }
+let persistTimer = null;
+function persist() {
+  // Debounce: save to server 500ms after last change
+  clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    if (!currentUser || !getToken()) return;
+    api('PUT', '/user', currentUser).catch(err => console.warn('Save failed:', err.message));
+  }, 500);
+}
 function getSubject(id) { return currentUser.subjects.find(subject => subject.id === id); }
 function getTopic(id) { for (const subject of currentUser.subjects) { const topic = subject.topics.find(item => item.id === id); if (topic) return { ...topic, subject }; } return null; }
 function getTask(id) { return currentUser.tasks.find(task => task.id === id); }
@@ -379,17 +397,73 @@ function calculateRisk(extraTests = 0) { const workload = openTasks().reduce((su
 function runSimulation() { const text = $('#whatIfInput').value.trim(); if (!text) { toast('Hãy mô tả một thay đổi để TB mô phỏng.'); return; } const number = Number((text.match(/\d+/) || ['1'])[0]); const currentRisk = calculateRisk(number); const newRisk = Math.max(5, Math.round(currentRisk * .42)); const first = openTasks()[0]; const plan = first ? `Đưa “${first.title}” vào phiên sớm nhất, sau đó tách ${number > 1 ? `${number} phiên` : '1 phiên'} ôn ngắn 45 phút trong khung giờ rảnh.` : 'Tạo các phiên ôn ngắn trong khung giờ rảnh bạn đã chọn.'; $('#simulationResult').hidden = false; $('#simulationResult').innerHTML = `<div class="risk-comparison"><div><p>Lịch hiện tại</p><strong>${currentRisk}<small>%</small></strong><span>nguy cơ trễ</span></div><div class="risk-arrow">→</div><div class="improved"><p>Phương án mới</p><strong>${newRisk}<small>%</small></strong><span>nguy cơ trễ</span></div></div><p class="plan-summary"><b>Đề xuất:</b> ${escapeHTML(plan)} Lịch cố định vẫn được giữ nguyên.</p><button class="apply-plan" id="applyPlan">Áp dụng phương án mới</button>`; $('#runSimulation').disabled = true; $('#runSimulation').innerHTML = 'Đã tạo phương án <span>✓</span>'; }
 function applySimulation() { const text = $('#whatIfInput').value.trim(); const number = Number((text.match(/\d+/) || ['1'])[0]); const oldRisk = calculateRisk(number); currentUser.lastSimulation = { summary: `Ưu tiên thêm ${number} phiên ôn ngắn, nguy cơ trễ giảm từ ${oldRisk}% xuống ${Math.max(5, Math.round(oldRisk * .42))}%.`, appliedAt: TODAY }; persist(); renderApp(); closeModal('whatIfModal'); showPage('schedule'); toast('Đã áp dụng phương án mới vào lịch linh hoạt.'); }
 
-function signIn(email, password) { const account = accounts().find(item => item.email.toLowerCase() === email.trim().toLowerCase() && item.password === password); if (!account) { $('#loginError').textContent = 'Email hoặc mật khẩu chưa đúng. Bạn có thể dùng tài khoản mẫu bên dưới.'; $('#loginError').hidden = false; return; } currentUser = clone(account); localStorage.setItem(STORAGE.current, account.id); $('#authView').hidden = true; $('#appShell').hidden = false; activePage = 'home'; renderApp(); if (!currentUser.onboarded) { resetOnboarding(); openModal('onboardingModal'); } }
-function logout() { if (timerRunning) toggleTimer(); localStorage.removeItem(STORAGE.current); currentUser = null; $('#appShell').hidden = true; $('#authView').hidden = false; $$('.modal-backdrop.open').forEach(modal => closeModal(modal.id)); $('#loginPassword').value = ''; toast('Đã đăng xuất khỏi hồ sơ demo.'); }
+async function signIn(email, password) {
+  try {
+    const { token, user } = await api('POST', '/login', { email, password });
+    setToken(token);
+    currentUser = user;
+    $('#loginError').hidden = true;
+    $('#authView').hidden = true;
+    $('#appShell').hidden = false;
+    activePage = 'home';
+    renderApp();
+    if (!currentUser.onboarded) { resetOnboarding(); openModal('onboardingModal'); }
+  } catch (err) {
+    $('#loginError').textContent = err.message;
+    $('#loginError').hidden = false;
+  }
+}
+function logout() {
+  if (timerRunning) toggleTimer();
+  setToken(null);
+  currentUser = null;
+  $('#appShell').hidden = true;
+  $('#authView').hidden = false;
+  $$('.modal-backdrop.open').forEach(modal => closeModal(modal.id));
+  $('#loginPassword').value = '';
+  toast('Đã đăng xuất.');
+}
 function resetOnboarding() { onboardingStep = 1; onboardingChosenSubjects = new Set(['Toán']); onboardingChosenDays = new Set([1, 2, 3, 4, 5]); $$('.onboarding-step').forEach(step => step.classList.toggle('active', Number(step.dataset.onboardingStep) === 1)); $$('.onboarding-dots i').forEach((dot, index) => dot.classList.toggle('active', index === 0)); $('#onboardingNext').innerHTML = 'Tiếp tục <span>→</span>'; $$('#onboardingSubjects button').forEach(button => button.classList.toggle('chosen', onboardingChosenSubjects.has(button.dataset.subjectChoice))); $$('#onboardingDays button').forEach(button => button.classList.toggle('chosen', onboardingChosenDays.has(Number(button.dataset.day)))); }
 function advanceOnboarding() { if (onboardingStep < 4) { onboardingStep += 1; $$('.onboarding-step').forEach(step => step.classList.toggle('active', Number(step.dataset.onboardingStep) === onboardingStep)); $$('.onboarding-dots i').forEach((dot, index) => dot.classList.toggle('active', index < onboardingStep)); $('#onboardingNext').innerHTML = onboardingStep === 4 ? 'Tạo kế hoạch đầu tiên <span>✦</span>' : 'Tiếp tục <span>→</span>'; return; } currentUser.profile.grade = $('#onboardingGrade').value.trim(); currentUser.profile.goal = $('#onboardingGoal').value.trim(); currentUser.availability = { start: $('#onboardingStart').value, end: $('#onboardingEnd').value, days: [...onboardingChosenDays] }; const colors = { 'Toán': ['math', '∫'], 'Tin học': ['info', '&lt;/&gt;'], IELTS: ['ielts', 'A'] }; currentUser.subjects = [...onboardingChosenSubjects].map(name => ({ id: uid('subject'), name, target: '', color: colors[name][0], icon: colors[name][1], topics: [{ id: uid('topic'), name: name === 'Toán' ? 'Chủ đề đầu tiên' : name === 'Tin học' ? 'Thuật toán cơ bản' : 'Reading', mastery: 50, quiz: {} }] })); currentUser.onboarded = true; persist(); renderApp(); closeModal('onboardingModal'); toast('Kế hoạch đầu tiên đã sẵn sàng. Hãy thêm nhiệm vụ để TB ưu tiên lịch.'); }
-function createProfile(event) { event.preventDefault(); const email = $('#createEmail').value.trim().toLowerCase(); if (accounts().some(account => account.email.toLowerCase() === email)) { toast('Email demo này đã tồn tại. Hãy đăng nhập hoặc dùng email khác.'); return; } const account = blankAccount({ id: uid('user'), email, password: $('#createPassword').value, name: $('#createName').value.trim() }); const values = accounts(); values.push(account); setAccounts(values); closeModal('loginProfileModal'); signIn(email, account.password); }
+async function createProfile(event) {
+  event.preventDefault();
+  const email = $('#createEmail').value.trim().toLowerCase();
+  const password = $('#createPassword').value;
+  const name = $('#createName').value.trim();
+  try {
+    const { token, user } = await api('POST', '/register', { name, email, password });
+    setToken(token);
+    currentUser = user;
+    closeModal('loginProfileModal');
+    $('#authView').hidden = true;
+    $('#appShell').hidden = false;
+    activePage = 'home';
+    renderApp();
+    if (!currentUser.onboarded) { resetOnboarding(); openModal('onboardingModal'); }
+    toast('Tài khoản đã được tạo!');
+  } catch (err) {
+    toast(err.message);
+  }
+}
 function exportData() { const blob = new Blob([JSON.stringify(currentUser, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `TB-${currentUser.profile.name.toLowerCase().replace(/\s+/g, '-')}.json`; link.click(); URL.revokeObjectURL(url); toast('Đã xuất bản sao lưu dữ liệu.'); }
-function resetDemo() { if (!window.confirm('Khôi phục dữ liệu mẫu? Các thay đổi của tài khoản hiện tại sẽ bị thay thế.')) return; const replacement = seedAccount(); replacement.id = currentUser.id; replacement.email = currentUser.email; replacement.password = currentUser.password; currentUser = replacement; persist(); renderApp(); toast('Đã khôi phục dữ liệu mẫu cho tài khoản này.'); }
+function resetDemo() { if (!window.confirm('Khôi phục dữ liệu mẫu? Các thay đổi của tài khoản hiện tại sẽ bị thay thế.')) return; const replacement = seedAccount(); replacement.id = currentUser.id; replacement.email = currentUser.email; currentUser = replacement; persist(); renderApp(); toast('Đã khôi phục dữ liệu mẫu cho tài khoản này.'); }
 function toggleNotification() { let popover = $('#notificationPopover'); if (!popover) { popover = document.createElement('aside'); popover.id = 'notificationPopover'; popover.className = 'notification-popover'; document.body.append(popover); } const review = currentUser.reviewSchedules.filter(item => item.status === 'scheduled' && item.due <= TODAY)[0]; const topic = review && getTopic(review.topicId); popover.innerHTML = `<h3>Nhắc học hôm nay</h3><p><b>${topic ? `Ôn lại ${escapeHTML(topic.name)}` : 'Kiểm tra lịch học'}</b><br>${topic ? 'Đúng lịch spaced repetition đã lưu.' : 'TB sẽ nhắc khi có phiên hoặc lịch ôn mới.'}</p><p><b>${openTasks().length} nhiệm vụ đang mở</b><br>Phiên quan trọng nhất đã được đưa lên đầu lịch.</p>`; popover.classList.toggle('open'); }
 
-ensureSeed();
-const remembered = localStorage.getItem(STORAGE.current); if (remembered) { const account = accounts().find(item => item.id === remembered); if (account) signIn(account.email, account.password); }
+// Auto-login from saved token
+(async function autoLogin() {
+  if (!getToken()) return;
+  try {
+    const { user } = await api('GET', '/user');
+    currentUser = user;
+    $('#authView').hidden = true;
+    $('#appShell').hidden = false;
+    activePage = 'home';
+    renderApp();
+    if (!currentUser.onboarded) { resetOnboarding(); openModal('onboardingModal'); }
+  } catch {
+    setToken(null); // token expired/invalid
+  }
+})();
 
 $('#loginForm').addEventListener('submit', event => { event.preventDefault(); signIn($('#loginEmail').value, $('#loginPassword').value); });
 $('#fillDemo').addEventListener('click', () => { $('#loginEmail').value = DEMO_EMAIL; $('#loginPassword').value = DEMO_PASSWORD; $('#loginError').hidden = true; });
