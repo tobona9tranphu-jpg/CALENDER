@@ -911,38 +911,69 @@ async function handleTimetableFile(file) {
   }
 }
 
+function extractDocxTables(xmlText) {
+  const tableMatches = xmlText.match(/<w:tbl[\s\S]*?<\/w:tbl>/g) || [];
+  return tableMatches.map(tbl => {
+    const rowMatches = tbl.match(/<w:tr[\s\S]*?<\/w:tr>/g) || [];
+    return rowMatches.map(tr => {
+      const cellMatches = tr.match(/<w:tc[\s\S]*?<\/w:tc>/g) || [];
+      return cellMatches.map(tc => {
+        const textMatches = tc.match(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g) || [];
+        return textMatches.map(t => t.replace(/<[^>]+>/g, '')).join('').trim();
+      });
+    });
+  });
+}
+
 async function parseDocxTimetable(file) {
   if (typeof JSZip === 'undefined') {
-    throw new Error('Đang tải thư viện xử lý Word, vui lòng thử lại sau giây lát.');
+    throw new Error('Đang tải thư viện xử lý Word, vui lòng kiểm tra kết nối và thử lại.');
   }
-  const zip = await JSZip.loadAsync(file);
+
+  let arrayBuffer;
+  if (file.arrayBuffer) {
+    arrayBuffer = await file.arrayBuffer();
+  } else {
+    arrayBuffer = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  let zip;
+  try {
+    zip = await JSZip.loadAsync(arrayBuffer);
+  } catch (zErr) {
+    if (file.name.toLowerCase().endsWith('.doc')) {
+      throw new Error('Tệp Word định dạng cũ (.doc) không thể giải mã trực tiếp. Bạn vui lòng mở file và chọn Lưu dưới dạng (Save As) sang đuôi ".docx" hoặc chụp ảnh TKB để nhập nhé!');
+    }
+    throw new Error('Không thể mở tệp Word này. Hãy đảm bảo đây là file Word định dạng chuẩn (.docx).');
+  }
+
   const docFile = zip.file('word/document.xml');
-  if (!docFile) throw new Error('Không tìm thấy nội dung văn bản trong file docx.');
+  if (!docFile) throw new Error('Không tìm thấy nội dung văn bản (word/document.xml) trong file docx.');
 
   const xmlText = await docFile.async('text');
-  const parser = new DOMParser();
-  const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-  const tables = xmlDoc.getElementsByTagName('w:tbl');
+  const tables = extractDocxTables(xmlText);
 
   if (!tables.length) {
-    return parseTextTimetable(xmlDoc.textContent || '');
+    const allTexts = (xmlText.match(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g) || [])
+      .map(t => t.replace(/<[^>]+>/g, ''))
+      .join('\n');
+    return parseTextTimetable(allTexts);
   }
 
   // Check if document contains multi-class tables (e.g. Master Timetable for all classes)
   const classMap = {}; // className -> { label, slots: [] }
   let hasMultiClassTable = false;
 
-  for (let t = 0; t < tables.length; t++) {
-    const tbl = tables[t];
-    const rows = tbl.getElementsByTagName('w:tr');
+  for (const rows of tables) {
     if (!rows.length) continue;
 
     // Analyze header row (row 0)
-    const headerCells = [];
-    const firstRowCells = rows[0].getElementsByTagName('w:tc');
-    for (let c = 0; c < firstRowCells.length; c++) {
-      headerCells.push(firstRowCells[c].textContent.trim());
-    }
+    const headerCells = rows[0];
 
     // Detect class columns
     const classCols = {};
@@ -963,11 +994,7 @@ async function parseDocxTimetable(file) {
       let currentPeriod = 1;
 
       for (let r = 1; r < rows.length; r++) {
-        const cells = [];
-        const rowCells = rows[r].getElementsByTagName('w:tc');
-        for (let c = 0; c < rowCells.length; c++) {
-          cells.push(rowCells[c].textContent.trim());
-        }
+        const cells = rows[r];
         if (!cells.length) continue;
 
         // Day cell (col 0): Thứ 2..7 or empty
@@ -1022,18 +1049,16 @@ async function parseDocxTimetable(file) {
 
   // Otherwise, fallback to single-table parser
   const rawSlots = [];
-  for (let t = 0; t < tables.length; t++) {
-    const tbl = tables[t];
-    const rows = tbl.getElementsByTagName('w:tr');
+  for (const rows of tables) {
     if (!rows.length) continue;
 
     let dayCols = {};
     let periodCol = -1;
 
     for (let r = 0; r < Math.min(rows.length, 3); r++) {
-      const cells = rows[r].getElementsByTagName('w:tc');
+      const cells = rows[r];
       for (let c = 0; c < cells.length; c++) {
-        const text = cells[c].textContent.trim().toLowerCase();
+        const text = cells[c].toLowerCase();
         if (text.includes('thứ 2') || text.includes('hai') || text === 't2' || text === '2') dayCols[c] = 1;
         else if (text.includes('thứ 3') || text.includes('ba') || text === 't3' || text === '3') dayCols[c] = 2;
         else if (text.includes('thứ 4') || text.includes('tư') || text === 't4' || text === '4') dayCols[c] = 3;
@@ -1046,7 +1071,7 @@ async function parseDocxTimetable(file) {
     }
 
     if (Object.keys(dayCols).length < 2) {
-      const cellCount = rows[0].getElementsByTagName('w:tc').length;
+      const cellCount = rows[0].length;
       if (cellCount >= 7) {
         dayCols = { 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6 };
         periodCol = 0;
@@ -1057,18 +1082,18 @@ async function parseDocxTimetable(file) {
 
     let currentPeriod = 1;
     for (let r = 0; r < rows.length; r++) {
-      const cells = rows[r].getElementsByTagName('w:tc');
+      const cells = rows[r];
       if (!cells.length) continue;
 
       if (periodCol >= 0 && cells[periodCol]) {
-        const pMatch = cells[periodCol].textContent.trim().match(/\d+/);
+        const pMatch = cells[periodCol].match(/\d+/);
         if (pMatch) currentPeriod = parseInt(pMatch[0], 10);
       }
 
       for (const [colStr, dayNum] of Object.entries(dayCols)) {
         const colIdx = parseInt(colStr, 10);
         if (colIdx < cells.length && colIdx !== periodCol) {
-          const rawCell = cells[colIdx].textContent.trim();
+          const rawCell = cells[colIdx];
           const parsed = parseSubjectAndTeacher(rawCell);
           if (parsed) {
             const times = PERIOD_TIMES[currentPeriod] || {
@@ -1613,8 +1638,20 @@ $('#addMilestoneForm').addEventListener('submit', addMilestone);
 $('#timetableFileInput').addEventListener('change', e => { if (e.target.files?.[0]) handleTimetableFile(e.target.files[0]); });
 $('#notePhotoInput').addEventListener('change', e => { if (e.target.files?.[0]) processNotePhoto(e.target.files[0]); });
 
+// Prevent browser from opening/downloading dropped files when dropped outside dropzone
+window.addEventListener('dragover', e => { e.preventDefault(); }, false);
+window.addEventListener('drop', e => { e.preventDefault(); }, false);
+
 const timetableDropzone = $('#timetableDropzone');
+const importModal = $('#importTimetableModal');
+
 if (timetableDropzone) {
+  timetableDropzone.addEventListener('click', (e) => {
+    if (e.target !== $('#timetableFileInput')) {
+      $('#timetableFileInput').click();
+    }
+  });
+
   ['dragenter', 'dragover'].forEach(name => {
     timetableDropzone.addEventListener(name, (e) => {
       e.preventDefault();
@@ -1622,18 +1659,57 @@ if (timetableDropzone) {
       timetableDropzone.classList.add('dragover');
     });
   });
-  ['dragleave', 'drop'].forEach(name => {
+
+  ['dragleave', 'dragend'].forEach(name => {
     timetableDropzone.addEventListener(name, (e) => {
       e.preventDefault();
       e.stopPropagation();
       timetableDropzone.classList.remove('dragover');
     });
   });
+
   timetableDropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    timetableDropzone.classList.remove('dragover');
     const files = e.dataTransfer?.files;
     if (files && files[0]) handleTimetableFile(files[0]);
   });
 }
+
+if (importModal) {
+  importModal.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    timetableDropzone?.classList.add('dragover');
+  });
+  importModal.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    if (!e.relatedTarget || !importModal.contains(e.relatedTarget)) {
+      timetableDropzone?.classList.remove('dragover');
+    }
+  });
+  importModal.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    timetableDropzone?.classList.remove('dragover');
+    const files = e.dataTransfer?.files;
+    if (files && files[0]) handleTimetableFile(files[0]);
+  });
+}
+
+// Global page drop: if user drops a TKB file anywhere on the web app, auto-open modal and process
+document.addEventListener('drop', (e) => {
+  const files = e.dataTransfer?.files;
+  if (files && files[0]) {
+    const ext = files[0].name.split('.').pop().toLowerCase();
+    if (['docx', 'doc', 'png', 'jpg', 'jpeg', 'webp', 'txt'].includes(ext)) {
+      e.preventDefault();
+      e.stopPropagation();
+      openTimetableModal();
+      handleTimetableFile(files[0]);
+    }
+  }
+});
 
 document.addEventListener('click', event => {
   const nav = event.target.closest('[data-page]'); if (nav) showPage(nav.dataset.page);

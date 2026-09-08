@@ -355,10 +355,18 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  position: relative;
+  user-select: none;
 }
 .dropzone.dragover, .dropzone:hover {
   border-color: #6458cc;
   background: #f2f0fc;
+}
+.dropzone > * {
+  pointer-events: none;
+}
+.dropzone button {
+  pointer-events: auto;
 }
 .dropzone-icon {
   font-size: 34px;
