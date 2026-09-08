@@ -98,8 +98,12 @@
           <p id="importStatusText">Đang bóc tách thời khóa biểu...</p>
         </div>
         <div class="import-preview" id="importPreview" hidden>
+          <div class="class-picker-box" id="classPickerBox" hidden>
+            <label for="importClassSelect"><strong>🏫 Tệp TKB chứa nhiều lớp học. Chọn lớp của bạn:</strong></label>
+            <select id="importClassSelect" class="class-select-dropdown"></select>
+          </div>
           <div class="section-heading" style="margin-bottom: 8px;">
-            <h3 style="font-size: 13px; margin: 0;">Các ca học nhận diện được (<span id="parsedSlotCount">0</span>)</h3>
+            <h3 style="font-size: 13px; margin: 0;">Lịch học <span id="parsedClassLabel" style="color:#6458cc; font-weight:700;"></span> (<span id="parsedSlotCount">0</span> ca)</h3>
             <span class="eyebrow">KIỂM TRA TRƯỚC KHI LƯU</span>
           </div>
           <div class="preview-slot-list" id="previewSlotList"></div>

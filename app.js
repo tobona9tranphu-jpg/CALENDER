@@ -726,6 +726,8 @@ function openPhotoLightbox(src) {
 
 /* --- Timetable Import (DOCX / Image / Text) --- */
 let parsedImportSlots = [];
+let detectedMultiClasses = null;
+let selectedImportClassName = null;
 
 const PERIOD_TIMES = {
   1: { start: '07:15', end: '08:00' },
@@ -740,27 +742,105 @@ const PERIOD_TIMES = {
   10: { start: '16:30', end: '17:15' },
 };
 
+function parseSubjectAndTeacher(raw) {
+  if (!raw) return null;
+  const str = raw.trim().replace(/\s+/g, ' ');
+  if (!str || str.toLowerCase() === 'nghỉ' || str === '-' || str === 'x' || str.length < 2) return null;
+
+  let subjectPart = str;
+  let teacherPart = '';
+
+  const dashIdx = str.indexOf('-');
+  if (dashIdx > 0) {
+    subjectPart = str.slice(0, dashIdx).trim();
+    teacherPart = str.slice(dashIdx + 1).trim();
+  }
+
+  const sLower = subjectPart.toLowerCase();
+  let cleanSubject = subjectPart;
+  let subjectGroup = 'Toán';
+
+  if (sLower === 'chào cờ') {
+    cleanSubject = 'Chào cờ';
+    subjectGroup = 'Chào cờ';
+  } else if (sLower.startsWith('shl') || sLower.includes('sinh hoạt')) {
+    cleanSubject = 'Sinh hoạt lớp';
+    subjectGroup = 'Sinh hoạt lớp';
+  } else if (sLower.startsWith('hđtn') || sLower.includes('trải nghiệm')) {
+    cleanSubject = 'HĐ Trải nghiệm';
+    subjectGroup = 'Hoạt động trải nghiệm';
+  } else if (sLower.startsWith('cđtoán') || sLower.startsWith('cđ toán')) {
+    cleanSubject = 'Chuyên đề Toán';
+    subjectGroup = 'Toán';
+  } else if (sLower.startsWith('cđanh') || sLower.startsWith('cđ anh')) {
+    cleanSubject = 'Chuyên đề Tiếng Anh';
+    subjectGroup = 'Tiếng Anh';
+  } else if (sLower.startsWith('cđvăn') || sLower.startsWith('cđ văn')) {
+    cleanSubject = 'Chuyên đề Ngữ văn';
+    subjectGroup = 'Ngữ văn';
+  } else if (sLower.startsWith('cđlý') || sLower.startsWith('cđ lý')) {
+    cleanSubject = 'Chuyên đề Vật lí';
+    subjectGroup = 'Vật lí';
+  } else if (sLower.startsWith('cđhóa') || sLower.startsWith('cđ hóa')) {
+    cleanSubject = 'Chuyên đề Hóa học';
+    subjectGroup = 'Hóa học';
+  } else if (sLower.startsWith('cđsinh') || sLower.startsWith('cđ sinh')) {
+    cleanSubject = 'Chuyên đề Sinh học';
+    subjectGroup = 'Sinh học';
+  } else if (sLower.startsWith('cđsử') || sLower.startsWith('cđ sử')) {
+    cleanSubject = 'Chuyên đề Lịch sử';
+    subjectGroup = 'Lịch sử';
+  } else if (sLower.startsWith('cđđịa') || sLower.startsWith('cđ địa')) {
+    cleanSubject = 'Chuyên đề Địa lí';
+    subjectGroup = 'Địa lí';
+  } else if (sLower === 'toán' || sLower === 'toan') {
+    cleanSubject = 'Toán';
+    subjectGroup = 'Toán';
+  } else if (sLower === 'văn' || sLower === 'ngữ văn' || sLower === 'van') {
+    cleanSubject = 'Ngữ văn';
+    subjectGroup = 'Ngữ văn';
+  } else if (sLower === 'anh' || sLower === 'tiếng anh' || sLower === 'en') {
+    cleanSubject = 'Tiếng Anh';
+    subjectGroup = 'Tiếng Anh';
+  } else if (sLower === 'lý' || sLower === 'vật lí' || sLower === 'vật lý') {
+    cleanSubject = 'Vật lí';
+    subjectGroup = 'Vật lí';
+  } else if (sLower === 'hóa' || sLower === 'hóa học') {
+    cleanSubject = 'Hóa học';
+    subjectGroup = 'Hóa học';
+  } else if (sLower === 'sinh' || sLower === 'sinh học') {
+    cleanSubject = 'Sinh học';
+    subjectGroup = 'Sinh học';
+  } else if (sLower === 'sử' || sLower === 'lịch sử') {
+    cleanSubject = 'Lịch sử';
+    subjectGroup = 'Lịch sử';
+  } else if (sLower === 'địa' || sLower === 'địa lí' || sLower === 'địa lý') {
+    cleanSubject = 'Địa lí';
+    subjectGroup = 'Địa lí';
+  } else if (sLower === 'tin' || sLower === 'tin học') {
+    cleanSubject = 'Tin học';
+    subjectGroup = 'Tin học';
+  } else if (sLower.includes('gdkt') || sLower.includes('pl') || sLower === 'gdcd') {
+    cleanSubject = 'GDCD / KT&PL';
+    subjectGroup = 'GDCD';
+  } else if (sLower === 'qp' || sLower.includes('quốc phòng')) {
+    cleanSubject = 'Giáo dục quốc phòng';
+    subjectGroup = 'Thể dục / GDQP';
+  } else if (sLower === 'td' || sLower.includes('thể dục')) {
+    cleanSubject = 'Thể dục';
+    subjectGroup = 'Thể dục / GDQP';
+  } else if (sLower.includes('công nghệ') || sLower === 'cn') {
+    cleanSubject = 'Công nghệ';
+    subjectGroup = 'Công nghệ';
+  }
+
+  const title = teacherPart ? `${cleanSubject} (GV ${teacherPart})` : cleanSubject;
+  return { subject: cleanSubject, subjectGroup, teacher: teacherPart, title };
+}
+
 function normalizeSubjectName(str) {
-  if (!str) return null;
-  const s = str.trim().replace(/\s+/g, ' ');
-  if (!s || s === '-' || s === 'x' || s.length < 2) return null;
-  const lower = s.toLowerCase();
-  if (lower.includes('toán') || lower === 'toan') return 'Toán';
-  if (lower.includes('ngữ văn') || lower.includes('văn') || lower === 'van') return 'Ngữ văn';
-  if (lower.includes('tiếng anh') || lower.includes('anh') || lower === 'en' || lower === 'english') return 'Tiếng Anh';
-  if (lower.includes('vật lí') || lower.includes('vật lý') || lower.includes('lý') || lower === 'ly') return 'Vật lí';
-  if (lower.includes('hóa học') || lower.includes('hóa') || lower === 'hoa') return 'Hóa học';
-  if (lower.includes('sinh học') || lower.includes('sinh')) return 'Sinh học';
-  if (lower.includes('lịch sử') || lower.includes('sử') || lower === 'su') return 'Lịch sử';
-  if (lower.includes('địa lí') || lower.includes('địa lý') || lower.includes('địa')) return 'Địa lí';
-  if (lower.includes('tin học') || lower.includes('tin') || lower.includes('cntt')) return 'Tin học';
-  if (lower.includes('gdcd') || lower.includes('công dân') || lower.includes('kinh tế & pháp luật') || lower.includes('ktpl')) return 'GDCD';
-  if (lower.includes('chào cờ')) return 'Chào cờ';
-  if (lower.includes('sinh hoạt') || lower.includes('shl')) return 'Sinh hoạt lớp';
-  if (lower.includes('thể dục') || lower.includes('gdqp') || lower.includes('quốc phòng')) return 'Thể dục / GDQP';
-  if (lower.includes('công nghệ')) return 'Công nghệ';
-  if (lower.includes('âm nhạc') || lower.includes('mỹ thuật')) return 'Nghệ thuật';
-  return s.charAt(0).toUpperCase() + s.slice(1);
+  const parsed = parseSubjectAndTeacher(str);
+  return parsed ? parsed.title : null;
 }
 
 function mergeConsecutiveSlots(slots) {
@@ -786,9 +866,12 @@ function mergeConsecutiveSlots(slots) {
 
 function openTimetableModal() {
   parsedImportSlots = [];
+  detectedMultiClasses = null;
+  selectedImportClassName = null;
   $('#timetableFileInput').value = '';
   $('#importStatus').hidden = true;
   $('#importPreview').hidden = true;
+  $('#classPickerBox').hidden = true;
   $('#timetableDropzone').hidden = false;
   openModal('importTimetableModal');
 }
@@ -798,6 +881,7 @@ async function handleTimetableFile(file) {
   $('#timetableDropzone').hidden = true;
   $('#importStatus').hidden = false;
   $('#importPreview').hidden = true;
+  $('#classPickerBox').hidden = true;
   $('#importStatusText').textContent = `Đang bóc tách thời khóa biểu từ "${file.name}"...`;
 
   try {
@@ -813,8 +897,12 @@ async function handleTimetableFile(file) {
       slots = parseTextTimetable(text);
     }
 
-    parsedImportSlots = slots;
-    renderImportPreview();
+    if (!detectedMultiClasses) {
+      parsedImportSlots = slots;
+      $('#parsedClassLabel').textContent = '';
+      $('#classPickerBox').hidden = true;
+      renderImportPreview();
+    }
   } catch (err) {
     console.error('Lỗi khi đọc file TKB:', err);
     $('#importStatus').hidden = true;
@@ -840,6 +928,99 @@ async function parseDocxTimetable(file) {
     return parseTextTimetable(xmlDoc.textContent || '');
   }
 
+  // Check if document contains multi-class tables (e.g. Master Timetable for all classes)
+  const classMap = {}; // className -> { label, slots: [] }
+  let hasMultiClassTable = false;
+
+  for (let t = 0; t < tables.length; t++) {
+    const tbl = tables[t];
+    const rows = tbl.getElementsByTagName('w:tr');
+    if (!rows.length) continue;
+
+    // Analyze header row (row 0)
+    const headerCells = [];
+    const firstRowCells = rows[0].getElementsByTagName('w:tc');
+    for (let c = 0; c < firstRowCells.length; c++) {
+      headerCells.push(firstRowCells[c].textContent.trim());
+    }
+
+    // Detect class columns
+    const classCols = {};
+    headerCells.forEach((cellText, colIdx) => {
+      const match = cellText.match(/(\d+[A-Za-z]+\d*)/);
+      if (match) {
+        const className = match[1];
+        classCols[colIdx] = { className, fullLabel: cellText };
+        if (!classMap[className]) {
+          classMap[className] = { label: cellText, slots: [] };
+        }
+      }
+    });
+
+    if (Object.keys(classCols).length >= 2) {
+      hasMultiClassTable = true;
+      let currentDay = 1;
+      let currentPeriod = 1;
+
+      for (let r = 1; r < rows.length; r++) {
+        const cells = [];
+        const rowCells = rows[r].getElementsByTagName('w:tc');
+        for (let c = 0; c < rowCells.length; c++) {
+          cells.push(rowCells[c].textContent.trim());
+        }
+        if (!cells.length) continue;
+
+        // Day cell (col 0): Thứ 2..7 or empty
+        if (cells[0]) {
+          const dm = cells[0].match(/\d+/);
+          if (dm) {
+            const num = parseInt(dm[0], 10);
+            currentDay = (num >= 2 && num <= 7) ? num - 1 : num;
+          }
+        }
+
+        // Period cell (col 1): Tiết 1..5
+        if (cells[1]) {
+          const pm = cells[1].match(/\d+/);
+          if (pm) currentPeriod = parseInt(pm[0], 10);
+        }
+
+        // Collect each class cell
+        for (const [colStr, colInfo] of Object.entries(classCols)) {
+          const colIdx = parseInt(colStr, 10);
+          if (colIdx < cells.length) {
+            const rawVal = cells[colIdx];
+            const parsed = parseSubjectAndTeacher(rawVal);
+            if (parsed) {
+              const times = PERIOD_TIMES[currentPeriod] || {
+                start: `${String(7 + Math.floor(currentPeriod / 2)).padStart(2, '0')}:00`,
+                end: `${String(7 + Math.floor(currentPeriod / 2)).padStart(2, '0')}:45`
+              };
+              classMap[colInfo.className].slots.push({
+                id: uid('imported'),
+                day: currentDay,
+                period: currentPeriod,
+                title: parsed.title,
+                subjectGroup: parsed.subjectGroup,
+                start: times.start,
+                end: times.end,
+                type: 'school'
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // If multi-class master timetable was detected:
+  if (hasMultiClassTable && Object.keys(classMap).length > 1) {
+    detectedMultiClasses = classMap;
+    setupClassPickerUI(classMap);
+    return [];
+  }
+
+  // Otherwise, fallback to single-table parser
   const rawSlots = [];
   for (let t = 0; t < tables.length; t++) {
     const tbl = tables[t];
@@ -888,23 +1069,22 @@ async function parseDocxTimetable(file) {
         const colIdx = parseInt(colStr, 10);
         if (colIdx < cells.length && colIdx !== periodCol) {
           const rawCell = cells[colIdx].textContent.trim();
-          if (rawCell && !rawCell.toLowerCase().includes('thứ') && rawCell !== '-') {
-            const subject = normalizeSubjectName(rawCell);
-            if (subject) {
-              const times = PERIOD_TIMES[currentPeriod] || {
-                start: `${String(7 + Math.floor(currentPeriod / 2)).padStart(2, '0')}:00`,
-                end: `${String(7 + Math.floor(currentPeriod / 2)).padStart(2, '0')}:45`
-              };
-              rawSlots.push({
-                id: uid('imported'),
-                day: dayNum,
-                period: currentPeriod,
-                title: subject,
-                start: times.start,
-                end: times.end,
-                type: 'school'
-              });
-            }
+          const parsed = parseSubjectAndTeacher(rawCell);
+          if (parsed) {
+            const times = PERIOD_TIMES[currentPeriod] || {
+              start: `${String(7 + Math.floor(currentPeriod / 2)).padStart(2, '0')}:00`,
+              end: `${String(7 + Math.floor(currentPeriod / 2)).padStart(2, '0')}:45`
+            };
+            rawSlots.push({
+              id: uid('imported'),
+              day: dayNum,
+              period: currentPeriod,
+              title: parsed.title,
+              subjectGroup: parsed.subjectGroup,
+              start: times.start,
+              end: times.end,
+              type: 'school'
+            });
           }
         }
       }
@@ -913,6 +1093,47 @@ async function parseDocxTimetable(file) {
   }
 
   return mergeConsecutiveSlots(rawSlots);
+}
+
+function setupClassPickerUI(classMap) {
+  const select = $('#importClassSelect');
+  const classKeys = Object.keys(classMap);
+
+  // Group classes by grade (Khối 12, Khối 11, Khối 10...)
+  const groups = {};
+  classKeys.forEach(cls => {
+    const grade = cls.match(/^\d+/)?.[0] || 'Khác';
+    if (!groups[grade]) groups[grade] = [];
+    groups[grade].push(cls);
+  });
+
+  // Sort groups descending (12, 11, 10)
+  const sortedGradeKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+
+  let optionsHTML = '';
+  sortedGradeKeys.forEach(gradeKey => {
+    const label = gradeKey === 'Khác' ? 'Lớp khác' : `Khối ${gradeKey}`;
+    optionsHTML += `<optgroup label="${label}">`;
+    groups[gradeKey].forEach(cls => {
+      optionsHTML += `<option value="${cls}">${escapeHTML(classMap[cls].label)}</option>`;
+    });
+    optionsHTML += `</optgroup>`;
+  });
+
+  select.innerHTML = optionsHTML;
+
+  // Auto-select based on user profile (e.g. currentUser.profile.grade = "Lớp 12A1")
+  const userGradeText = (currentUser.profile?.grade || '').toUpperCase();
+  const matchedClass = classKeys.find(cls => userGradeText.includes(cls));
+  const initialClass = matchedClass || classKeys[0];
+
+  select.value = initialClass;
+  selectedImportClassName = initialClass;
+  parsedImportSlots = mergeConsecutiveSlots(classMap[initialClass].slots);
+
+  $('#parsedClassLabel').textContent = `lớp ${classMap[initialClass].label}`;
+  $('#classPickerBox').hidden = false;
+  renderImportPreview();
 }
 
 async function parseImageTimetable(file) {
@@ -959,15 +1180,16 @@ function parseTextTimetable(text) {
     else if (lower.includes('thứ 6') || lower.startsWith('t6')) currentDay = 5;
     else if (lower.includes('thứ 7') || lower.startsWith('t7')) currentDay = 6;
     else {
-      const parts = l.split(/[:,;-]/).map(p => normalizeSubjectName(p)).filter(Boolean);
-      parts.forEach((subject, idx) => {
+      const parts = l.split(/[:,;-]/).map(p => parseSubjectAndTeacher(p)).filter(Boolean);
+      parts.forEach((pObj, idx) => {
         const period = Math.min(10, idx + 1);
         const times = PERIOD_TIMES[period] || { start: '07:15', end: '08:00' };
         slots.push({
           id: uid('txt-slot'),
           day: currentDay,
           period,
-          title: subject,
+          title: pObj.title,
+          subjectGroup: pObj.subjectGroup,
           start: times.start,
           end: times.end,
           type: 'school'
@@ -1009,6 +1231,10 @@ function applyImportedTimetable() {
     currentUser.fixedSchedules = currentUser.fixedSchedules.filter(item => item.type !== 'school');
   }
 
+  if (selectedImportClassName) {
+    currentUser.profile.grade = `Lớp ${selectedImportClassName}`;
+  }
+
   parsedImportSlots.forEach(slot => {
     currentUser.fixedSchedules.push({
       id: uid('fixed-school'),
@@ -1020,13 +1246,14 @@ function applyImportedTimetable() {
       flexible: false
     });
 
-    const existing = currentUser.subjects.find(s => s.name.toLowerCase() === slot.title.toLowerCase());
-    if (!existing && !['Chào cờ', 'Sinh hoạt lớp', 'Thể dục / GDQP', 'Sinh hoạt'].includes(slot.title)) {
-      const meta = SUBJECT_METADATA[slot.title] || { color: 'custom', icon: slot.title.slice(0, 1).toUpperCase() };
+    const targetName = slot.subjectGroup || slot.title;
+    const existing = currentUser.subjects.find(s => s.name.toLowerCase() === targetName.toLowerCase());
+    if (!existing && !['Chào cờ', 'Sinh hoạt lớp', 'Thể dục / GDQP', 'Sinh hoạt', 'Hoạt động trải nghiệm'].includes(targetName)) {
+      const meta = SUBJECT_METADATA[targetName] || { color: 'custom', icon: targetName.slice(0, 1).toUpperCase() };
       currentUser.subjects.push({
         id: uid('subject'),
-        name: slot.title,
-        target: 'Môn học mới từ TKB',
+        name: targetName,
+        target: 'Môn học theo TKB',
         color: meta.color,
         icon: meta.icon,
         topics: meta.defaultTopic ? [{ id: uid('topic'), name: meta.defaultTopic, mastery: 50, quiz: {} }] : []
@@ -1037,7 +1264,8 @@ function applyImportedTimetable() {
   persist();
   renderApp();
   closeModal('importTimetableModal');
-  toast(`Đã cập nhật thành công ${parsedImportSlots.length} ca học vào Thời khóa biểu!`);
+  const classMsg = selectedImportClassName ? `lớp ${selectedImportClassName} ` : '';
+  toast(`Đã cập nhật thành công TKB ${classMsg}(${parsedImportSlots.length} ca học)!`);
   showPage('schedule');
 }
 
@@ -1478,7 +1706,19 @@ document.addEventListener('click', event => {
     renderImportPreview();
   }
 });
-document.addEventListener('change', event => { if (event.target.id === 'reminderToggle') { currentUser.settings.reminders = event.target.checked; persist(); renderSettings(); } if (event.target.id === 'coachToggle') { currentUser.settings.coach = event.target.checked; persist(); renderInsights(); renderSettings(); } });
+document.addEventListener('change', event => {
+  if (event.target.id === 'importClassSelect') {
+    const chosen = event.target.value;
+    if (detectedMultiClasses && detectedMultiClasses[chosen]) {
+      selectedImportClassName = chosen;
+      parsedImportSlots = mergeConsecutiveSlots(detectedMultiClasses[chosen].slots);
+      $('#parsedClassLabel').textContent = `lớp ${detectedMultiClasses[chosen].label}`;
+      renderImportPreview();
+    }
+  }
+  if (event.target.id === 'reminderToggle') { currentUser.settings.reminders = event.target.checked; persist(); renderSettings(); }
+  if (event.target.id === 'coachToggle') { currentUser.settings.coach = event.target.checked; persist(); renderInsights(); renderSettings(); }
+});
 $$('.modal-backdrop').forEach(backdrop => backdrop.addEventListener('click', event => { if (event.target === backdrop) closeModal(backdrop.id); }));
 document.addEventListener('keydown', event => { if (event.key === 'Escape') { $$('.modal-backdrop.open').forEach(modal => closeModal(modal.id)); $('#notificationPopover')?.classList.remove('open'); } });
 
