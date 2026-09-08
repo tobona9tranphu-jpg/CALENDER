@@ -2,15 +2,67 @@ const $ = (selector, scope = document) => scope.querySelector(selector);
 const $$ = (selector, scope = document) => [...scope.querySelectorAll(selector)];
 const API = '/api';
 const TOKEN_KEY = 'TB-auth-token';
+const STORAGE_LOCAL_ACCOUNTS = 'TB-demo-accounts-v2';
+const STORAGE_LOCAL_CURRENT = 'TB-demo-current-user-v2';
+
 function getToken() { return localStorage.getItem(TOKEN_KEY); }
 function setToken(t) { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); }
+
+function getLocalAccounts() {
+  try {
+    const list = JSON.parse(localStorage.getItem(STORAGE_LOCAL_ACCOUNTS) || '[]');
+    if (!list.length) {
+      const seed = seedAccount();
+      localStorage.setItem(STORAGE_LOCAL_ACCOUNTS, JSON.stringify([seed]));
+      return [seed];
+    }
+    return list;
+  } catch {
+    return [seedAccount()];
+  }
+}
+
+function setLocalAccounts(accounts) {
+  localStorage.setItem(STORAGE_LOCAL_ACCOUNTS, JSON.stringify(accounts));
+}
+
+function saveLocalUser(user) {
+  if (!user || !user.id) return;
+  const list = getLocalAccounts();
+  const idx = list.findIndex(a => a.id === user.id);
+  if (idx >= 0) list[idx] = clone(user);
+  else list.push(clone(user));
+  setLocalAccounts(list);
+}
+
 async function api(method, path, body = null) {
+  if (window.location.protocol === 'file:') {
+    throw new Error('OFFLINE_MODE');
+  }
   const opts = { method, headers: { 'Content-Type': 'application/json' } };
   const token = getToken();
-  if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+  if (token && !token.startsWith('local-')) opts.headers['Authorization'] = 'Bearer ' + token;
   if (body) opts.body = JSON.stringify(body);
-  const res = await fetch(API + path, opts);
-  const data = await res.json();
+
+  let res;
+  try {
+    res = await fetch(API + path, opts);
+  } catch {
+    throw new Error('OFFLINE_MODE');
+  }
+
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new Error('OFFLINE_MODE');
+  }
+
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error('OFFLINE_MODE');
+  }
+
   if (!res.ok) throw new Error(data.error || 'Lỗi server');
   return data;
 }
@@ -131,11 +183,18 @@ function blankAccount({ id, email, name }) {
 
 let persistTimer = null;
 function persist() {
-  // Debounce: save to server 500ms after last change
+  if (!currentUser) return;
+  // Always persist locally as primary/backup storage
+  saveLocalUser(currentUser);
+
+  // Sync to server if token available
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
-    if (!currentUser || !getToken()) return;
-    api('PUT', '/user', currentUser).catch(err => console.warn('Save failed:', err.message));
+    const token = getToken();
+    if (!token || token.startsWith('local-')) return;
+    api('PUT', '/user', currentUser).catch(err => {
+      // Ignored: local copy is already saved
+    });
   }, 500);
 }
 function getSubject(id) { return currentUser.subjects.find(subject => subject.id === id); }
@@ -432,18 +491,41 @@ function calculateRisk(extraTests = 0) { const workload = openTasks().reduce((su
 function runSimulation() { const text = $('#whatIfInput').value.trim(); if (!text) { toast('Hãy mô tả một thay đổi để TB mô phỏng.'); return; } const number = Number((text.match(/\d+/) || ['1'])[0]); const currentRisk = calculateRisk(number); const newRisk = Math.max(5, Math.round(currentRisk * .42)); const first = openTasks()[0]; const plan = first ? `Đưa “${first.title}” vào phiên sớm nhất, sau đó tách ${number > 1 ? `${number} phiên` : '1 phiên'} ôn ngắn 45 phút trong khung giờ rảnh.` : 'Tạo các phiên ôn ngắn trong khung giờ rảnh bạn đã chọn.'; $('#simulationResult').hidden = false; $('#simulationResult').innerHTML = `<div class="risk-comparison"><div><p>Lịch hiện tại</p><strong>${currentRisk}<small>%</small></strong><span>nguy cơ trễ</span></div><div class="risk-arrow">→</div><div class="improved"><p>Phương án mới</p><strong>${newRisk}<small>%</small></strong><span>nguy cơ trễ</span></div></div><p class="plan-summary"><b>Đề xuất:</b> ${escapeHTML(plan)} Lịch cố định vẫn được giữ nguyên.</p><button class="apply-plan" id="applyPlan">Áp dụng phương án mới</button>`; $('#runSimulation').disabled = true; $('#runSimulation').innerHTML = 'Đã tạo phương án <span>✓</span>'; }
 function applySimulation() { const text = $('#whatIfInput').value.trim(); const number = Number((text.match(/\d+/) || ['1'])[0]); const oldRisk = calculateRisk(number); currentUser.lastSimulation = { summary: `Ưu tiên thêm ${number} phiên ôn ngắn, nguy cơ trễ giảm từ ${oldRisk}% xuống ${Math.max(5, Math.round(oldRisk * .42))}%.`, appliedAt: TODAY }; persist(); renderApp(); closeModal('whatIfModal'); showPage('schedule'); toast('Đã áp dụng phương án mới vào lịch linh hoạt.'); }
 
+function loginSuccess() {
+  $('#loginError').hidden = true;
+  $('#authView').hidden = true;
+  $('#appShell').hidden = false;
+  activePage = 'home';
+  renderApp();
+  if (!currentUser.onboarded) {
+    resetOnboarding();
+    openModal('onboardingModal');
+  }
+}
+
 async function signIn(email, password) {
+  const normEmail = email.trim().toLowerCase();
   try {
-    const { token, user } = await api('POST', '/login', { email, password });
+    const { token, user } = await api('POST', '/login', { email: normEmail, password });
     setToken(token);
     currentUser = user;
-    $('#loginError').hidden = true;
-    $('#authView').hidden = true;
-    $('#appShell').hidden = false;
-    activePage = 'home';
-    renderApp();
-    if (!currentUser.onboarded) { resetOnboarding(); openModal('onboardingModal'); }
+    saveLocalUser(user);
+    loginSuccess();
   } catch (err) {
+    if (err.message === 'OFFLINE_MODE') {
+      const accounts = getLocalAccounts();
+      const account = accounts.find(item => item.email.toLowerCase() === normEmail && item.password === password);
+      if (!account) {
+        $('#loginError').textContent = 'Email hoặc mật khẩu chưa đúng. Bạn có thể dùng tài khoản mẫu bên dưới.';
+        $('#loginError').hidden = false;
+        return;
+      }
+      currentUser = clone(account);
+      setToken('local-' + account.id);
+      localStorage.setItem(STORAGE_LOCAL_CURRENT, account.id);
+      loginSuccess();
+      return;
+    }
     $('#loginError').textContent = err.message;
     $('#loginError').hidden = false;
   }
@@ -451,6 +533,7 @@ async function signIn(email, password) {
 function logout() {
   if (timerRunning) toggleTimer();
   setToken(null);
+  localStorage.removeItem(STORAGE_LOCAL_CURRENT);
   currentUser = null;
   $('#appShell').hidden = true;
   $('#authView').hidden = false;
@@ -532,14 +615,28 @@ async function createProfile(event) {
     const { token, user } = await api('POST', '/register', { name, email, password });
     setToken(token);
     currentUser = user;
+    saveLocalUser(user);
     closeModal('loginProfileModal');
-    $('#authView').hidden = true;
-    $('#appShell').hidden = false;
-    activePage = 'home';
-    renderApp();
-    if (!currentUser.onboarded) { resetOnboarding(); openModal('onboardingModal'); }
+    loginSuccess();
     toast('Tài khoản đã được tạo!');
   } catch (err) {
+    if (err.message === 'OFFLINE_MODE') {
+      const accounts = getLocalAccounts();
+      if (accounts.some(a => a.email.toLowerCase() === email)) {
+        toast('Email này đã tồn tại. Hãy đăng nhập hoặc dùng email khác.');
+        return;
+      }
+      const newAcc = blankAccount({ id: uid('user'), email, name });
+      newAcc.password = password;
+      saveLocalUser(newAcc);
+      currentUser = clone(newAcc);
+      setToken('local-' + newAcc.id);
+      localStorage.setItem(STORAGE_LOCAL_CURRENT, newAcc.id);
+      closeModal('loginProfileModal');
+      loginSuccess();
+      toast('Tài khoản đã được tạo thành công!');
+      return;
+    }
     toast(err.message);
   }
 }
@@ -547,19 +644,37 @@ function exportData() { const blob = new Blob([JSON.stringify(currentUser, null,
 function resetDemo() { if (!window.confirm('Khôi phục dữ liệu mẫu? Các thay đổi của tài khoản hiện tại sẽ bị thay thế.')) return; const replacement = seedAccount(); replacement.id = currentUser.id; replacement.email = currentUser.email; currentUser = replacement; persist(); renderApp(); toast('Đã khôi phục dữ liệu mẫu cho tài khoản này.'); }
 function toggleNotification() { let popover = $('#notificationPopover'); if (!popover) { popover = document.createElement('aside'); popover.id = 'notificationPopover'; popover.className = 'notification-popover'; document.body.append(popover); } const review = currentUser.reviewSchedules.filter(item => item.status === 'scheduled' && item.due <= TODAY)[0]; const topic = review && getTopic(review.topicId); popover.innerHTML = `<h3>Nhắc học hôm nay</h3><p><b>${topic ? `Ôn lại ${escapeHTML(topic.name)}` : 'Kiểm tra lịch học'}</b><br>${topic ? 'Đúng lịch spaced repetition đã lưu.' : 'TB sẽ nhắc khi có phiên hoặc lịch ôn mới.'}</p><p><b>${openTasks().length} nhiệm vụ đang mở</b><br>Phiên quan trọng nhất đã được đưa lên đầu lịch.</p>`; popover.classList.toggle('open'); }
 
-// Auto-login from saved token
+// Auto-login from saved token or local session
 (async function autoLogin() {
-  if (!getToken()) return;
+  const token = getToken();
+  if (!token) return;
+
+  if (token.startsWith('local-')) {
+    const userId = token.replace(/^local-/, '');
+    const account = getLocalAccounts().find(a => a.id === userId);
+    if (account) {
+      currentUser = clone(account);
+      loginSuccess();
+    }
+    return;
+  }
+
   try {
     const { user } = await api('GET', '/user');
     currentUser = user;
-    $('#authView').hidden = true;
-    $('#appShell').hidden = false;
-    activePage = 'home';
-    renderApp();
-    if (!currentUser.onboarded) { resetOnboarding(); openModal('onboardingModal'); }
-  } catch {
-    setToken(null); // token expired/invalid
+    saveLocalUser(user);
+    loginSuccess();
+  } catch (err) {
+    if (err.message === 'OFFLINE_MODE') {
+      const rememberedId = localStorage.getItem(STORAGE_LOCAL_CURRENT);
+      const account = getLocalAccounts().find(a => a.id === rememberedId);
+      if (account) {
+        currentUser = clone(account);
+        loginSuccess();
+        return;
+      }
+    }
+    setToken(null);
   }
 })();
 
