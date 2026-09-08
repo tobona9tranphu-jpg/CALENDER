@@ -121,6 +121,41 @@ const formatMinutes = (value) => `${Math.floor(value / 60)}h ${String(value % 60
 const formatVietnameseDate = (d) => { const days = ['CHỦ NHẬT','THỨ HAI','THỨ BA','THỨ TƯ','THỨ NĂM','THỨ SÁU','THỨ BẢY']; return days[d.getDay()] + ', ' + d.getDate() + ' THÁNG ' + (d.getMonth()+1); };
 const formatShortDate = (value) => new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit' }).format(dateFrom(value));
 
+function normalizeDateInput(value) {
+  if (!value) return null;
+  const parsed = new Date(`${value}T12:00:00+07:00`);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+function calculateDaysUntil(dateValue) {
+  const parsed = normalizeDateInput(dateValue);
+  if (!parsed) return null;
+  return Math.round((parsed - dateFrom(TODAY)) / 86400000);
+}
+function getReviewIntervalByUnderstanding(understanding) {
+  const mapping = { 1: 1, 2: 2, 3: 3, 4: 7, 5: 14 };
+  return mapping[Number(understanding)] || 3;
+}
+function scheduleReviewForTopic(topicId, understanding, options = {}) {
+  const topic = getTopic(topicId);
+  if (!topic) return null;
+  const interval = getReviewIntervalByUnderstanding(understanding);
+  const days = Number(options.days ?? interval);
+  const dueDate = new Date(`${TODAY}T12:00:00+07:00`);
+  dueDate.setDate(dueDate.getDate() + days);
+  const due = dueDate.toISOString().slice(0, 10);
+  currentUser.reviewSchedules = (currentUser.reviewSchedules || []).filter(review => review.topicId !== topicId || review.status !== 'scheduled');
+  currentUser.reviewSchedules.push({
+    id: uid('review'),
+    topicId,
+    due,
+    interval: days,
+    status: 'scheduled',
+    ...options.extra
+  });
+  return { topic, due, interval: days };
+}
+
 function relDate(offset) { const d = new Date(); d.setDate(d.getDate() + offset); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
 
 function seedAccount() {
@@ -264,9 +299,79 @@ function appearance(subject) {
 }
 function subjectAverage(subject) { return subject.topics.length ? Math.round(subject.topics.reduce((sum, topic) => sum + Number(topic.mastery || 0), 0) / subject.topics.length) : 0; }
 function masteryStatus(mastery) { if (mastery >= 85) return ['Mastered', 'status-mastered']; if (mastery >= 70) return ['Good', 'status-good']; if (mastery >= 45) return ['Improving', 'status-improving']; return ['Weak', 'status-weak']; }
-function priorityLabel(priority) { if (priority >= 5) return ['Ưu tiên cao', 'high']; if (priority >= 4) return ['Quan trọng', 'medium']; return ['Theo kế hoạch', 'regular']; }
+function priorityLabel(score) {
+  if (score >= 80) return ['Khẩn cấp', 'critical'];
+  if (score >= 60) return ['Quan trọng', 'high'];
+  if (score >= 40) return ['Nên làm', 'medium'];
+  return ['Bình thường', 'regular'];
+}
 function deadlineText(value) { const difference = Math.round((dateFrom(value) - dateFrom(TODAY)) / 86400000); if (difference < 0) return `Quá hạn ${Math.abs(difference)} ngày`; if (difference === 0) return 'Hạn chót hôm nay'; if (difference === 1) return 'Hạn chót ngày mai'; return `Hạn chót ${formatShortDate(value)}`; }
-function taskScore(task) { const topic = getTopic(task.topicId); const days = Math.round((dateFrom(task.deadline) - dateFrom(TODAY)) / 86400000); return task.priority * 30 + Math.max(0, 4 - days) * 18 + (100 - (topic?.mastery || 50)) * .45; }
+function getPriorityScoreBreakdown(task) {
+  const topic = getTopic(task.topicId);
+  const mastery = Number(topic?.mastery ?? 50);
+  const dateValue = task.deadline || TODAY;
+  const days = Math.round((dateFrom(dateValue) - dateFrom(TODAY)) / 86400000);
+  const closestExam = (currentUser.examMilestones || [])
+    .filter(item => dateFrom(item.date) >= dateFrom(TODAY))
+    .sort((a, b) => a.date.localeCompare(b.date))[0];
+  const examDays = closestExam ? Math.round((dateFrom(closestExam.date) - dateFrom(TODAY)) / 86400000) : 999;
+  const reviewDue = (currentUser.reviewSchedules || []).some(item => item.topicId === task.topicId && item.status === 'scheduled' && dateFrom(item.due) <= dateFrom(TODAY));
+  const missedSessions = (currentUser.sessions || []).filter(session => session.topicId === task.topicId && session.status === 'missed').length;
+
+  const deadlineUrgency = Math.max(0, 30 - Math.max(days, 0) * 6) + (days <= 0 ? 20 : 0);
+  const examProximity = examDays <= 7 ? Math.max(0, 40 - examDays * 5) : 0;
+  const knowledgeWeakness = Math.max(0, (100 - mastery) * 0.35);
+  const reviewScore = reviewDue ? 20 : 0;
+  const missedScore = Math.min(20, missedSessions * 10);
+  const taskPriority = Number(task.priority || 3) * 7;
+  const importanceBoost = Number(task.minutes || 45) >= 60 ? 8 : 4;
+
+  return {
+    deadlineUrgency,
+    examProximity,
+    knowledgeWeakness,
+    reviewScore,
+    missedScore,
+    taskPriority,
+    importanceBoost,
+    days,
+    examDays,
+    mastery,
+    reviewDue,
+    missedSessions,
+  };
+}
+function calculatePriorityScore(task) {
+  const breakdown = getPriorityScoreBreakdown(task);
+  const total = breakdown.deadlineUrgency
+    + breakdown.examProximity
+    + breakdown.knowledgeWeakness
+    + breakdown.reviewScore
+    + breakdown.missedScore
+    + breakdown.taskPriority
+    + breakdown.importanceBoost;
+  return Math.min(100, Math.round(total));
+}
+function describePriorityReason(task) {
+  const breakdown = getPriorityScoreBreakdown(task);
+  const reasons = [];
+  if (breakdown.days <= 2) reasons.push(`deadline còn ${Math.max(0, breakdown.days)} ngày`);
+  if (breakdown.examDays <= 7) reasons.push(`thi sắp tới (${breakdown.examDays} ngày)`);
+  if (breakdown.mastery < 60) reasons.push(`mức nắm vững ${breakdown.mastery}%`);
+  if (breakdown.reviewDue) reasons.push('review đến hạn');
+  if (breakdown.missedSessions) reasons.push(`${breakdown.missedSessions} phiên bỏ lỡ`);
+  return reasons.slice(0, 3).join(' • ') || 'Dựa trên dữ liệu học tập hiện có';
+}
+function taskPriorityMeta(task) {
+  const score = calculatePriorityScore(task);
+  const [label, cssClass] = priorityLabel(score);
+  let level = 'NORMAL';
+  if (score >= 80) level = 'CRITICAL';
+  else if (score >= 60) level = 'IMPORTANT';
+  else if (score >= 40) level = 'SHOULD DO';
+  return { score, label, cssClass, level };
+}
+function taskScore(task) { return calculatePriorityScore(task); }
 function openTasks() { return currentUser.tasks.filter(task => task.status !== 'done').sort((a, b) => taskScore(b) - taskScore(a)); }
 function initials() { return currentUser.profile.name.trim().slice(0, 1).toUpperCase() || 'L'; }
 
@@ -338,14 +443,16 @@ function renderToday() {
   const tasks = openTasks(); const plan = createPlan(); const completedToday = currentUser.sessions.filter(session => session.date === TODAY && session.status === 'complete');
   const totalMinutes = plan.plan.reduce((sum, task) => sum + Number(task.minutes), 0);
   const progress = currentUser.tasks.length ? Math.round((currentUser.tasks.filter(task => task.status === 'done').length / currentUser.tasks.length) * 100) : 0;
+  const criticalCount = tasks.filter(task => calculatePriorityScore(task) >= 80).length;
   $('#todayDescription').innerHTML = tasks.length ? `Bạn có <strong>${formatMinutes(totalMinutes)}</strong> cho ${plan.plan.length} phiên được TB ưu tiên hôm nay.` : 'Bạn chưa có nhiệm vụ mở. Hãy thêm một nhiệm vụ để TB tạo lịch phù hợp.';
-  $('#todayPoints').innerHTML = `<div><span class="point amber"></span><strong>${String(plan.plan.length).padStart(2, '0')}</strong><small>phiên học</small></div><div><span class="point purple"></span><strong>${String(tasks.filter(task => task.priority >= 4).length).padStart(2, '0')}</strong><small>việc quan trọng</small></div><div><span class="point green"></span><strong>${progress}%</strong><small>đã hoàn thành</small></div>`;
+  $('#todayPoints').innerHTML = `<div><span class="point amber"></span><strong>${String(plan.plan.length).padStart(2, '0')}</strong><small>phiên học</small></div><div><span class="point purple"></span><strong>${String(criticalCount).padStart(2, '0')}</strong><small>cảnh báo khẩn cấp</small></div><div><span class="point green"></span><strong>${progress}%</strong><small>đã hoàn thành</small></div>`;
   const focus = plan.plan[0] || tasks[0];
   if (!focus) { $('#focusSubject').textContent = 'Kế hoạch trống'; $('#focusTitle').textContent = 'Thêm nhiệm vụ đầu tiên'; $('#focusDuration').textContent = ''; $('#nextTime').textContent = 'SẴN SÀNG'; $('#focusReason').lastChild.textContent = 'TB sẽ giải thích lý do ưu tiên ngay khi có dữ liệu.'; $('#startStudy').disabled = true; return; }
   const subject = getSubject(focus.subjectId); const topic = getTopic(focus.topicId); const style = appearance(subject);
   $('#focusOrb').className = `subject-orb ${style.orb}`; $('#focusOrb').innerHTML = style.icon;
   $('#focusSubject').textContent = subject.name; $('#focusTitle').textContent = focus.title; $('#focusDuration').textContent = `${focus.minutes} phút`; $('#nextTime').textContent = focus.start ? `BẮT ĐẦU LÚC ${focus.start}` : 'ƯU TIÊN NGAY';
-  $('#focusReason').innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-3.6 10.8c.75.58 1.1 1.2 1.1 2.2h5c0-1 .35-1.62 1.1-2.2A6 6 0 0 0 12 3ZM9.5 20h5M10 17h4"/></svg>${focus.deadline === TODAY ? 'Hạn chót hôm nay, đồng thời nằm trong khung giờ rảnh của bạn.' : `${topic?.mastery || 0}% nắm vững · được ưu tiên theo hạn chót và tiến độ.`}`;
+  const focusMeta = taskPriorityMeta(focus);
+  $('#focusReason').innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-3.6 10.8c.75.58 1.1 1.2 1.1 2.2h5c0-1 .35-1.62 1.1-2.2A6 6 0 0 0 12 3ZM9.5 20h5M10 17h4"/></svg>${focusMeta.level}: ${describePriorityReason(focus)}.`;
   $('#startStudy').disabled = false; $('#startStudy').dataset.taskId = focus.id;
   const priorityRows = tasks.slice(0, 3); $('#priorityTasks').innerHTML = priorityRows.length ? priorityRows.map(taskHTML).join('') : emptyHTML('Không còn nhiệm vụ mở. Một ngày nhẹ nhàng cũng là tiến độ.');
   const upcomingDays = [];
@@ -363,8 +470,10 @@ function renderToday() {
   $('#homeTimeline').innerHTML = todayHTML + (upcomingHTML ? `<div class="upcoming-section"><p class="eyebrow" style="margin-top:16px;margin-bottom:8px;font-weight:700;">SẮP TỚI</p>${upcomingHTML}</div>` : '');
 }
 function taskHTML(task) {
-  const subject = getSubject(task.subjectId); const style = appearance(subject || { name: 'Môn khác' }); const [label, priorityClass] = priorityLabel(task.priority); const done = task.status === 'done';
-  return `<article class="task-row ${done ? 'done' : ''} ${task.priority >= 5 && !done ? 'task-highlight' : ''}" data-task-id="${task.id}"><button class="check-button ${done ? 'checked' : ''}" data-toggle-task="${task.id}" aria-label="Đổi trạng thái nhiệm vụ"></button><div class="task-category ${style.category}">${style.badge}</div><button class="task-main task-open" data-open-task="${task.id}"><h3>${escapeHTML(task.title)}</h3><p><span class="tiny-calendar">□</span>${done ? 'Đã hoàn thành' : deadlineText(task.deadline)} <i>•</i>Ước tính ${task.minutes} phút</p></button><span class="priority-label ${done ? 'regular' : priorityClass}">${done ? 'Hoàn thành' : label}</span><button class="task-arrow" data-open-task="${task.id}" aria-label="Chỉnh sửa nhiệm vụ">→</button></article>`;
+  const subject = getSubject(task.subjectId); const style = appearance(subject || { name: 'Môn khác' }); const done = task.status === 'done';
+  const meta = done ? { score: 0, label: 'Hoàn thành', cssClass: 'regular' } : taskPriorityMeta(task);
+  const reason = done ? 'Đã hoàn thành' : `${meta.score} điểm · ${describePriorityReason(task)}`;
+  return `<article class="task-row ${done ? 'done' : ''} ${meta.score >= 80 && !done ? 'task-highlight' : ''}" data-task-id="${task.id}"><button class="check-button ${done ? 'checked' : ''}" data-toggle-task="${task.id}" aria-label="Đổi trạng thái nhiệm vụ"></button><div class="task-category ${style.category}">${style.badge}</div><button class="task-main task-open" data-open-task="${task.id}"><h3>${escapeHTML(task.title)}</h3><p><span class="tiny-calendar">□</span>${done ? 'Đã hoàn thành' : deadlineText(task.deadline)} <i>•</i>${escapeHTML(reason)}</p></button><span class="priority-label ${done ? 'regular' : meta.cssClass}">${done ? 'Hoàn thành' : meta.label}</span><button class="task-arrow" data-open-task="${task.id}" aria-label="Chỉnh sửa nhiệm vụ">→</button></article>`;
 }
 function renderSubjectProgress() {
   $('#subjectProgress').innerHTML = currentUser.subjects.length ? currentUser.subjects.slice(0, 3).map(subject => { const style = appearance(subject); const average = subjectAverage(subject); return `<article class="subject-progress-card ${style.card}"><div class="subject-card-top"><span class="subject-orb small ${style.orb}">${style.icon}</span><span class="trend ${average >= 70 ? 'up' : 'neutral'}">${average >= 70 ? '↑ Tiến bộ' : 'Cần ưu tiên'}</span></div><h3>${escapeHTML(subject.name)}</h3><p class="subject-card-target">${escapeHTML(subject.target || `${subject.topics.length} chủ đề đang theo dõi`)}</p><div class="progress-line"><span style="width:${average}%"></span></div><strong>${average}% <small>nắm vững</small></strong></article>`; }).join('') : emptyHTML('Thêm môn học đầu tiên để bắt đầu theo dõi tiến độ.');
@@ -426,28 +535,36 @@ function emptyHTML(message) { return `<div class="empty-state">${escapeHTML(mess
 
 /* --- Exam Countdown & Milestones --- */
 function renderExamCountdown() {
-  const milestones = currentUser.examMilestones || [];
+  const milestones = (currentUser.examMilestones || []).filter(m => m && m.date);
   const upcoming = milestones
-    .filter(m => dateFrom(m.date) >= dateFrom(TODAY))
+    .filter(m => normalizeDateInput(m.date))
     .sort((a, b) => a.date.localeCompare(b.date));
 
   const banner = $('#examCountdownBanner');
   if (!banner) return;
 
   const nearest = upcoming[0];
+  const daysEl = $('#countdownDaysNumber');
   if (!nearest) {
     $('#countdownExamTitle').textContent = 'Chưa có kỳ thi nào';
     $('#countdownExamSubjects').textContent = 'Nhấp "Xem lịch thi" để thêm kỳ thi quan trọng';
-    $('#countdownDaysNumber').textContent = '--';
-    $('#countdownDaysNumber').className = '';
+    daysEl.textContent = '—';
+    daysEl.className = 'muted';
+    if (daysEl.nextElementSibling) daysEl.nextElementSibling.textContent = 'chưa có ngày';
     return;
   }
 
-  const diffDays = Math.round((dateFrom(nearest.date) - dateFrom(TODAY)) / 86400000);
-  $('#countdownExamTitle').textContent = nearest.title;
+  const diffDays = calculateDaysUntil(nearest.date);
+  $('#countdownExamTitle').textContent = nearest.title || 'Kỳ thi mới';
   $('#countdownExamSubjects').textContent = nearest.subjects || 'Tất cả các môn thi';
-  
-  const daysEl = $('#countdownDaysNumber');
+
+  if (diffDays === null) {
+    daysEl.textContent = '—';
+    daysEl.className = 'muted';
+    if (daysEl.nextElementSibling) daysEl.nextElementSibling.textContent = 'chưa có ngày';
+    return;
+  }
+
   if (diffDays <= 0) {
     daysEl.textContent = '0';
     daysEl.className = 'urgent';
@@ -591,10 +708,7 @@ function saveTakeNote(event) {
     return;
   }
 
-  // Ebbinghaus forgetting curve intervals:
-  // 1: 1 day, 2: 2 days, 3: 3 days, 4: 7 days, 5: 14 days
-  const intervals = { 1: 1, 2: 2, 3: 3, 4: 7, 5: 14 };
-  const interval = intervals[understanding] || 3;
+  const interval = getReviewIntervalByUnderstanding(understanding);
   const nextReviewDate = relDate(interval);
 
   const subject = getSubject(subjectId);
@@ -1324,8 +1438,17 @@ function toast(message) { const element = $('#toast'); element.textContent = mes
 function openStudy(taskId) { const task = getTask(taskId) || openTasks()[0]; if (!task) { toast('Hãy thêm một nhiệm vụ trước khi bắt đầu phiên học.'); showPage('tasks'); return; } selectedTimerTask = task; timerTotal = Number(task.minutes) * 60; timerSeconds = timerTotal; const subject = getSubject(task.subjectId); const style = appearance(subject); $('#timerOrb').className = `subject-orb ${style.orb} large`; $('#timerOrb').innerHTML = style.icon; $('#timerMeta').textContent = `${subject?.name || 'Tự học'} · ${task.minutes} PHÚT`; $('#studyTitle').textContent = task.title; $('#timerNote').textContent = 'Khi hoàn thành, TB sẽ lưu phiên học và tạo mốc ôn lại dựa trên mức độ hiểu của bạn.'; updateTimer(); $('#pauseTimer').textContent = 'Tạm dừng'; openModal('studyModal'); if (!timerRunning) toggleTimer(); }
 function updateTimer() { $('#timerDisplay').textContent = `${String(Math.floor(timerSeconds / 60)).padStart(2, '0')}:${String(timerSeconds % 60).padStart(2, '0')}`; $('#timerProgress').style.width = `${Math.min(100, ((timerTotal - timerSeconds) / timerTotal) * 100)}%`; }
 function toggleTimer() { timerRunning = !timerRunning; $('#pauseTimer').textContent = timerRunning ? 'Tạm dừng' : 'Tiếp tục'; if (timerRunning) { timerInterval = setInterval(() => { if (timerSeconds > 0) { timerSeconds -= 1; updateTimer(); } else { toggleTimer(); toast('Đã hết thời gian cho phiên này.'); } }, 1000); } else clearInterval(timerInterval); }
-function saveSession({ topicId, minutes, understanding, taskId = null }) { currentUser.sessions.push({ id: uid('session'), topicId, minutes: Number(minutes), understanding: Number(understanding), status: 'complete', date: TODAY, taskId }); const entry = getTopic(topicId); if (entry) { entry.mastery = Math.min(100, Math.round(entry.mastery + Math.max(1, Number(understanding) - 1))); const interval = Number(understanding) <= 2 ? 1 : Number(understanding) === 3 ? 3 : Number(understanding) === 4 ? 7 : 14; currentUser.reviewSchedules = currentUser.reviewSchedules.filter(review => review.topicId !== topicId || review.status !== 'scheduled'); const due = new Date(`${TODAY}T12:00:00+07:00`); due.setDate(due.getDate() + interval); currentUser.reviewSchedules.push({ id: uid('review'), topicId, due: due.toISOString().slice(0, 10), interval, status: 'scheduled' }); }
-  persist(); renderApp(); }
+function saveSession({ topicId, minutes, understanding, taskId = null }) {
+  currentUser.sessions.push({ id: uid('session'), topicId, minutes: Number(minutes), understanding: Number(understanding), status: 'complete', date: TODAY, taskId });
+  const entry = getTopic(topicId);
+  if (entry) {
+    const masteryDelta = Math.max(2, Number(understanding) * 6);
+    entry.mastery = Math.min(100, Math.max(0, Math.round(entry.mastery + masteryDelta / 2)));
+    scheduleReviewForTopic(topicId, understanding);
+  }
+  persist();
+  renderApp();
+}
 function completeTimer() { if (!selectedTimerTask) return; if (timerRunning) toggleTimer(); saveSession({ topicId: selectedTimerTask.topicId, minutes: selectedTimerTask.minutes, understanding: 4, taskId: selectedTimerTask.id }); closeModal('studyModal'); toast('Đã lưu phiên học và tạo mốc ôn lại mới.'); }
 function toggleTask(taskId) { const task = getTask(taskId); if (!task) return; task.status = task.status === 'done' ? 'open' : 'done'; persist(); renderApp(); toast(task.status === 'done' ? 'Đã cập nhật nhiệm vụ hoàn thành.' : 'Nhiệm vụ đã được mở lại.'); }
 
