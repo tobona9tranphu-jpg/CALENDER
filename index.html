@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="./mobile.css" />
     <link rel="stylesheet" href="./enhancements.css" />
     <link rel="stylesheet" href="./conflict.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   </head>
   <body>
     <section class="auth-view" id="authView" aria-label="Đăng nhập TB">
@@ -34,14 +35,25 @@
       </aside>
 
       <main class="main-content">
-        <header class="topbar"><button class="mobile-menu" aria-label="Mở điều hướng"><span></span><span></span></button><div><p class="eyebrow" id="headerDate"></p><h1 id="pageTitle"></h1></div><div class="header-actions"><button class="round-button notification" id="notificationButton" aria-label="Thông báo"><svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><b></b></button><button class="profile-shortcut" id="profileShortcut"><span class="avatar small" id="headerInitial">M</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button></div></header>
+        <header class="topbar"><button class="mobile-menu" aria-label="Mở điều hướng"><span></span><span></span></button><div><p class="eyebrow" id="headerDate"></p><h1 id="pageTitle"></h1></div><div class="header-actions"><button class="outline-button header-action-pill" id="openTakeNoteBtn">📸 Take Note</button><button class="outline-button header-action-pill" id="openMilestonesBtn">🎯 Kỳ thi</button><button class="round-button notification" id="notificationButton" aria-label="Thông báo"><svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><b></b></button><button class="profile-shortcut" id="profileShortcut"><span class="avatar small" id="headerInitial">M</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button></div></header>
 
         <section id="home" class="page active-page">
+          <div class="exam-countdown-banner" id="examCountdownBanner">
+            <div class="countdown-main">
+              <span class="countdown-badge">🎯 KỲ THI TIẾP THEO</span>
+              <h3 id="countdownExamTitle">Thi Giữa Học Kỳ I</h3>
+              <p id="countdownExamSubjects">Toán · Vật lí · Hóa học</p>
+            </div>
+            <div class="countdown-timer">
+              <div class="countdown-days"><strong id="countdownDaysNumber">--</strong><span>ngày nữa</span></div>
+              <button class="outline-button" id="manageExamsBtn">Xem lịch thi ↗</button>
+            </div>
+          </div>
           <div class="today-grid"><section class="today-intro"><div class="section-kicker"><span></span>KẾ HOẠCH HÔM NAY</div><h2 id="todayTitle">Một ngày học<br><em>thật đúng nhịp.</em></h2><p class="today-description" id="todayDescription"></p><div class="today-points" id="todayPoints"></div></section><section class="current-focus"><div class="focus-head"><span>ƯU TIÊN TIẾP THEO</span><span class="live-dot" id="nextTime">ĐANG TẠO LỊCH</span></div><div class="focus-subject"><span class="subject-orb math" id="focusOrb">∫</span><div><p id="focusSubject">Toán</p><h3 id="focusTitle">Ôn lại Tích phân</h3></div></div><p class="focus-reason" id="focusReason"><svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-3.6 10.8c.75.58 1.1 1.2 1.1 2.2h5c0-1 .35-1.62 1.1-2.2A6 6 0 0 0 12 3ZM9.5 20h5M10 17h4"/></svg></p><button class="primary-button start-study" id="startStudy"><span class="play">▶</span>Bắt đầu học <span class="duration" id="focusDuration"></span></button></section></div>
-          <div class="dashboard-layout"><div class="dashboard-left"><section class="content-section"><div class="section-heading"><div><p class="eyebrow">QUAN TRỌNG</p><h2>Việc cần ưu tiên</h2></div><button class="text-button show-tasks">Xem tất cả <span>→</span></button></div><div class="task-list" id="priorityTasks"></div></section><section class="content-section"><div class="section-heading"><div><p class="eyebrow">TIẾN ĐỘ</p><h2>Chủ đề của bạn</h2></div><button class="text-button" data-page="subjects">Khám phá <span>→</span></button></div><div class="subject-progress-grid" id="subjectProgress"></div></section></div><aside class="dashboard-right"><section class="mini-calendar"><div class="mini-calendar-head"><h2>...</h2><div><button aria-label="Tháng trước">‹</button><button aria-label="Tháng sau">›</button></div></div><div class="week-days"><span>T2</span><span>T3</span><span>T4</span><span>T5</span><span>T6</span><span>T7</span><span>CN</span></div><div class="dates" id="calendarDates"></div></section><section class="schedule-preview"><div class="section-heading"><div><p class="eyebrow">LỊCH HÔM NAY</p><h2>Nhịp học của bạn</h2></div><button class="icon-button show-schedule" aria-label="Xem lịch">↗</button></div><div class="timeline" id="homeTimeline"></div></section><section class="coach-card" id="coachCard"><div class="coach-card-top"><span class="coach-icon">✦</span><p>STUDY COACH</p><button id="dismissCoach" aria-label="Đóng gợi ý">×</button></div><h3 id="coachTitle"></h3><p id="coachText"></p><button class="coach-link" data-page="insights">Xem insight <span>→</span></button></section><button class="what-if-card" id="whatIfButton"><span class="what-if-icon">↺</span><span><b>Thay đổi kế hoạch?</b><small>Thử mô phỏng “What if”</small></span><span class="task-arrow">→</span></button></aside></div>
+          <div class="dashboard-layout"><div class="dashboard-left"><section class="content-section"><div class="section-heading"><div><p class="eyebrow">QUAN TRỌNG</p><h2>Việc cần ưu tiên</h2></div><button class="text-button show-tasks">Xem tất cả <span>→</span></button></div><div class="task-list" id="priorityTasks"></div></section><section class="content-section"><div class="section-heading"><div><p class="eyebrow">NHẬT KÝ BÀI HỌC</p><h2>Take Note & Ảnh bài vở</h2></div><button class="text-button" id="homeTakeNoteButton">+ Chụp bài học hôm nay <span>📸</span></button></div><div class="take-note-grid" id="takeNotesList"></div></section><section class="content-section"><div class="section-heading"><div><p class="eyebrow">TIẾN ĐỘ</p><h2>Chủ đề của bạn</h2></div><button class="text-button" data-page="subjects">Khám phá <span>→</span></button></div><div class="subject-progress-grid" id="subjectProgress"></div></section></div><aside class="dashboard-right"><section class="mini-calendar"><div class="mini-calendar-head"><h2>...</h2><div><button aria-label="Tháng trước">‹</button><button aria-label="Tháng sau">›</button></div></div><div class="week-days"><span>T2</span><span>T3</span><span>T4</span><span>T5</span><span>T6</span><span>T7</span><span>CN</span></div><div class="dates" id="calendarDates"></div></section><section class="schedule-preview"><div class="section-heading"><div><p class="eyebrow">LỊCH HÔM NAY</p><h2>Nhịp học của bạn</h2></div><button class="icon-button show-schedule" aria-label="Xem lịch">↗</button></div><div class="timeline" id="homeTimeline"></div></section><section class="coach-card" id="coachCard"><div class="coach-card-top"><span class="coach-icon">✦</span><p>STUDY COACH</p><button id="dismissCoach" aria-label="Đóng gợi ý">×</button></div><h3 id="coachTitle"></h3><p id="coachText"></p><button class="coach-link" data-page="insights">Xem insight <span>→</span></button></section><button class="what-if-card" id="whatIfButton"><span class="what-if-icon">↺</span><span><b>Thay đổi kế hoạch?</b><small>Thử mô phỏng “What if”</small></span><span class="task-arrow">→</span></button></aside></div>
         </section>
 
-        <section id="schedule" class="page secondary-page"><div class="page-intro"><div><p class="eyebrow">SMART SCHEDULE</p><h2>Lịch học biết <em>tự điều chỉnh.</em></h2><p>TB đặt các phiên linh hoạt vào khoảng trống bạn cho phép và không thay đổi lịch cố định.</p></div><div class="page-actions"><button class="outline-button" id="availabilityButton">◷ Khung giờ rảnh</button><button class="primary-button" id="fixedScheduleButton">+ Lịch cố định</button></div></div><div class="schedule-page-grid"><section class="week-schedule"><div class="schedule-toolbar"><div class="date-navigator"><button>‹</button><strong>Đang tải...</strong><button>›</button></div><button class="today-button" id="openWhatIf">↺ Mô phỏng thay đổi</button></div><div class="schedule-explainer"><span><i class="legend-fixed"></i>Lịch cố định</span><span><i class="legend-study"></i>Phiên TB đề xuất</span><small id="scheduleCapacity"></small></div><div class="smart-day-list" id="scheduleTimeline"></div></section><aside class="schedule-explain"><span class="schedule-spark">✦</span><p class="eyebrow">VÌ SAO LỊCH NÀY?</p><h3 id="scheduleReasonTitle"></h3><p id="scheduleReason"></p><div class="schedule-legend"><span><i class="legend-fixed"></i>Lịch cố định luôn được bảo toàn</span><span><i class="legend-study"></i>Phiên học theo dữ liệu</span></div></aside></div><section class="fixed-list-section"><div class="section-heading"><div><p class="eyebrow">LỊCH CỐ ĐỊNH</p><h2>Những thời gian không thể xê dịch</h2></div><button class="text-button" id="fixedScheduleButtonSecondary">+ Thêm lịch</button></div><div class="fixed-schedule-list" id="fixedSchedulesList"></div></section></section>
+        <section id="schedule" class="page secondary-page"><div class="page-intro"><div><p class="eyebrow">SMART SCHEDULE</p><h2>Lịch học biết <em>tự điều chỉnh.</em></h2><p>TB đặt các phiên linh hoạt vào khoảng trống bạn cho phép và không thay đổi lịch cố định.</p></div><div class="page-actions"><button class="primary-button" id="importTimetableButton">📥 Nhập TKB (Ảnh/Word)</button><button class="outline-button" id="availabilityButton">◷ Khung giờ rảnh</button><button class="outline-button" id="fixedScheduleButton">+ Lịch cố định</button></div></div><div class="schedule-page-grid"><section class="week-schedule"><div class="schedule-toolbar"><div class="date-navigator"><button>‹</button><strong>Đang tải...</strong><button>›</button></div><button class="today-button" id="openWhatIf">↺ Mô phỏng thay đổi</button></div><div class="schedule-explainer"><span><i class="legend-fixed"></i>Lịch cố định</span><span><i class="legend-study"></i>Phiên TB đề xuất</span><small id="scheduleCapacity"></small></div><div class="smart-day-list" id="scheduleTimeline"></div></section><aside class="schedule-explain"><span class="schedule-spark">✦</span><p class="eyebrow">VÌ SAO LỊCH NÀY?</p><h3 id="scheduleReasonTitle"></h3><p id="scheduleReason"></p><div class="schedule-legend"><span><i class="legend-fixed"></i>Lịch cố định luôn được bảo toàn</span><span><i class="legend-study"></i>Phiên học theo dữ liệu</span></div></aside></div><section class="fixed-list-section"><div class="section-heading"><div><p class="eyebrow">LỊCH CỐ ĐỊNH</p><h2>Những thời gian không thể xê dịch</h2></div><button class="text-button" id="fixedScheduleButtonSecondary">+ Thêm lịch</button></div><div class="fixed-schedule-list" id="fixedSchedulesList"></div></section></section>
 
         <section id="subjects" class="page secondary-page"><div class="page-intro compact"><div><p class="eyebrow">KNOWLEDGE MAP</p><h2>Nắm vững từng <em>chủ đề.</em></h2><p>Điểm nắm vững được cập nhật từ quiz, phiên học và mức độ hiểu bạn ghi lại.</p></div><button class="primary-button" id="addSubjectButton">+ Thêm môn học</button></div><div class="subjects-editor-hint"><span>✦</span>Bạn có thể thêm, đổi tên hoặc xoá môn/chủ đề. TB sẽ dùng thông tin này để ưu tiên lịch.</div><div class="subject-library" id="subjectLibrary"></div></section>
 
@@ -68,6 +80,121 @@
     <div class="modal-backdrop" id="profileModal" aria-hidden="true"><section class="form-modal" role="dialog" aria-modal="true" aria-labelledby="profileModalTitle"><button class="modal-close" data-close-modal="profileModal" aria-label="Đóng">×</button><p class="eyebrow">HỒ SƠ HỌC TẬP</p><h2 id="profileModalTitle">Bạn và mục tiêu</h2><form id="profileForm"><label>Tên hiển thị<input id="profileName" required maxlength="40" /></label><label>Lớp / chương trình<input id="profileGrade" maxlength="50" /></label><label>Mục tiêu chính<input id="profileGoal" maxlength="100" /></label><label>Múi giờ<select id="profileTimezone"><option value="Asia/Ho_Chi_Minh">Việt Nam (GMT+7)</option><option value="Asia/Bangkok">Bangkok (GMT+7)</option><option value="Asia/Singapore">Singapore (GMT+8)</option></select></label><button class="primary-button full-button" type="submit">Lưu hồ sơ</button></form></section></div>
     <div class="modal-backdrop" id="quickLogModal" aria-hidden="true"><section class="form-modal" role="dialog" aria-modal="true" aria-labelledby="quickLogTitle"><button class="modal-close" data-close-modal="quickLogModal" aria-label="Đóng">×</button><p class="eyebrow">GHI NHẬN PHIÊN HỌC</p><h2 id="quickLogTitle">Bạn vừa học thế nào?</h2><form id="quickLogForm"><label>Chủ đề<select id="logTopic"></select></label><div class="form-two-col"><label>Thời lượng<select id="logMinutes"><option value="25">25 phút</option><option value="45" selected>45 phút</option><option value="60">60 phút</option></select></label><label>Mức độ hiểu<select id="logUnderstanding"><option value="1">1 · Cần ôn lại</option><option value="2">2</option><option value="3" selected>3 · Ổn</option><option value="4">4</option><option value="5">5 · Rất chắc</option></select></label></div><button class="primary-button full-button" type="submit">Lưu phiên học</button></form></section></div>
     <div class="modal-backdrop" id="accountModal" aria-hidden="true"><section class="account-modal" role="dialog" aria-modal="true"><button class="modal-close" data-close-modal="accountModal" aria-label="Đóng">×</button><div class="account-modal-head"><span class="avatar" id="accountModalInitial">M</span><div><strong id="accountModalName"></strong><small id="accountModalEmail"></small></div></div><button class="account-action" id="openProfileFromAccount">Chỉnh sửa hồ sơ <span>→</span></button><button class="account-action" id="logoutButton">Đăng xuất <span>→</span></button></section></div>
+
+    <div class="modal-backdrop" id="importTimetableModal" aria-hidden="true">
+      <section class="form-modal import-modal" role="dialog" aria-modal="true" aria-labelledby="importTitle">
+        <button class="modal-close" data-close-modal="importTimetableModal" aria-label="Đóng">×</button>
+        <p class="eyebrow">TỰ ĐỘNG TÍCH HỢP TKB</p>
+        <h2 id="importTitle">Nhập Thời khóa biểu<br><em>từ Ảnh hoặc File</em></h2>
+        <div class="dropzone" id="timetableDropzone">
+          <input type="file" id="timetableFileInput" accept=".png,.jpg,.jpeg,.webp,.docx,.doc,.txt" hidden />
+          <span class="dropzone-icon">📥</span>
+          <strong>Kéo thả hoặc chọn Ảnh / File Word TKB</strong>
+          <p>Hỗ trợ ảnh chụp màn hình, ảnh chụp giấy (.png, .jpg) hoặc file Word (.docx, .doc)</p>
+          <button type="button" class="outline-button" id="browseTimetableBtn">Chọn tệp từ máy</button>
+        </div>
+        <div class="import-status" id="importStatus" hidden>
+          <div class="loading-spinner"></div>
+          <p id="importStatusText">Đang bóc tách thời khóa biểu...</p>
+        </div>
+        <div class="import-preview" id="importPreview" hidden>
+          <div class="section-heading" style="margin-bottom: 8px;">
+            <h3 style="font-size: 13px; margin: 0;">Các ca học nhận diện được (<span id="parsedSlotCount">0</span>)</h3>
+            <span class="eyebrow">KIỂM TRA TRƯỚC KHI LƯU</span>
+          </div>
+          <div class="preview-slot-list" id="previewSlotList"></div>
+          <div class="import-actions-bar">
+            <label class="radio-label">
+              <input type="radio" name="importMode" value="replace" checked />
+              <span><b>Thay thế TKB cũ</b> (Khuyên dùng khi đổi TKB trường)</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="importMode" value="merge" />
+              <span><b>Gộp thêm vào lịch hiện tại</b> (Thêm ca học thêm / CLB)</span>
+            </label>
+          </div>
+          <div class="form-modal-actions" style="margin-top: 15px;">
+            <button type="button" class="soft-button" id="cancelImportBtn">Hủy</button>
+            <button type="button" class="primary-button" id="applyTimetableBtn">Áp dụng vào Thời khóa biểu <span>✓</span></button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="takeNoteModal" aria-hidden="true">
+      <section class="form-modal take-note-modal" role="dialog" aria-modal="true" aria-labelledby="takeNoteTitle">
+        <button class="modal-close" data-close-modal="takeNoteModal" aria-label="Đóng">×</button>
+        <p class="eyebrow">NHẬT KÝ HỌC TẬP & NHẮC ÔN</p>
+        <h2 id="takeNoteTitle">Take Note bài học<br><em>kèm hình ảnh</em></h2>
+        <form id="takeNoteForm">
+          <div class="form-two-col">
+            <label>Môn học
+              <select id="takeNoteSubject" required></select>
+            </label>
+            <label>Chủ đề / Bài học
+              <input id="takeNoteTopic" required placeholder="Ví dụ: Đạo hàm cấp 2" maxlength="80" />
+            </label>
+          </div>
+          <label>Ảnh chụp bài vở / tài liệu hôm nay
+            <div class="photo-uploader" id="notePhotoBox">
+              <input type="file" id="notePhotoInput" accept="image/*" hidden />
+              <div id="photoPlaceholder" class="photo-placeholder">
+                <span style="font-size: 24px;">📷</span>
+                <p>Nhấp để chụp ảnh hoặc tải ảnh bài vở hôm nay</p>
+              </div>
+              <div id="photoPreviewContainer" class="photo-preview-container" hidden>
+                <img id="notePhotoImg" src="" alt="Ảnh bài học" />
+                <button type="button" class="remove-photo-btn" id="removePhotoBtn">✕ Đổi ảnh khác</button>
+              </div>
+            </div>
+          </label>
+          <label>Ghi chú tiến độ (học đến đâu?)
+            <textarea id="takeNoteContent" rows="2" placeholder="Ví dụ: Đã xong bài tập 1 đến 15 trang 45 SGK..."></textarea>
+          </label>
+          <div class="form-two-col">
+            <label>Mức độ hiểu bài hôm nay
+              <select id="takeNoteUnderstanding">
+                <option value="1">1 · Chưa chắc (Cần ôn gấp mai)</option>
+                <option value="2">2 · Tạm hiểu một nửa</option>
+                <option value="3" selected>3 · Khá ổn (Ôn sau 3 ngày)</option>
+                <option value="4">4 · Hiểu chắc chắn</option>
+                <option value="5">5 · Rất thành thạo</option>
+              </select>
+            </label>
+            <label>Chu kỳ nhắc ôn tự động
+              <div class="auto-review-badge">
+                <span>✦ Tự động lên lịch Spaced Repetition (+1d, +3d, +7d)</span>
+              </div>
+            </label>
+          </div>
+          <button class="primary-button full-button" type="submit">Lưu ghi chú & Kích hoạt nhắc ôn <span>✦</span></button>
+        </form>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="milestoneModal" aria-hidden="true">
+      <section class="form-modal milestone-modal" role="dialog" aria-modal="true" aria-labelledby="milestoneTitle">
+        <button class="modal-close" data-close-modal="milestoneModal" aria-label="Đóng">×</button>
+        <p class="eyebrow">SỔ TAY KỲ THI & CỘT MỐC</p>
+        <h2 id="milestoneTitle">Các kỳ thi quan trọng<br><em>trong năm học</em></h2>
+        <div class="milestones-list" id="milestonesList"></div>
+        <form id="addMilestoneForm" style="border-top: 1px solid var(--line); padding-top: 14px; margin-top: 14px;">
+          <p class="eyebrow">THÊM KỲ THI MỚI</p>
+          <label>Tên kỳ thi / Kiểm tra
+            <input id="milestoneName" required placeholder="Ví dụ: Thi Giữa Kỳ I hoặc Thi ĐGNL" maxlength="60" />
+          </label>
+          <div class="form-two-col">
+            <label>Ngày diễn ra
+              <input type="date" id="milestoneDate" required />
+            </label>
+            <label>Các môn thi
+              <input id="milestoneSubjects" placeholder="Ví dụ: Toán, Lý, Hóa" maxlength="80" />
+            </label>
+          </div>
+          <button class="outline-button full-button" type="submit" style="margin-top: 6px;">+ Thêm kỳ thi vào lịch</button>
+        </form>
+      </section>
+    </div>
     <div class="toast" id="toast" role="status"></div>
     <script src="./app.js"></script>
   </body>

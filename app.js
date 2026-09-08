@@ -172,13 +172,57 @@ function seedAccount() {
       { id: 'review-integral', topicId: 'integral', due: relDate(0), interval: 7, status: 'scheduled' },
       { id: 'review-derivatives', topicId: 'derivatives', due: relDate(3), interval: 3, status: 'scheduled' },
     ],
+    studyNotes: [
+      {
+        id: 'note-sample-1',
+        subjectId: 'math',
+        topicName: 'Đạo hàm hàm hợp & Quy tắc chuỗi',
+        noteText: 'Đã nắm công thức u^n, sin(u), cos(u). Cần làm thêm bài tập nâng cao phân thức bậc 2.',
+        photoUrl: null,
+        understanding: 4,
+        createdAt: relDate(-1),
+        interval: 3,
+        nextReviewDate: relDate(2),
+        reviewed: false
+      },
+      {
+        id: 'note-sample-2',
+        subjectId: 'informatics',
+        topicName: 'Quy hoạch động trên mảng 2 chiều',
+        noteText: 'Xong bài toán Tìm đường đi có tổng lớn nhất. Cần ôn lại cách truy vết kết quả.',
+        photoUrl: null,
+        understanding: 3,
+        createdAt: relDate(-2),
+        interval: 1,
+        nextReviewDate: relDate(0),
+        reviewed: false
+      }
+    ],
+    examMilestones: [
+      { id: 'm-midterm1', title: 'Thi Giữa Học Kỳ I', date: relDate(35), subjects: 'Toán, Vật lí, Hóa học, Ngữ văn, Tiếng Anh' },
+      { id: 'm-final1', title: 'Thi Cuối Học Kỳ I', date: relDate(95), subjects: 'Toán, Vật lí, Hóa học, Tiếng Anh, Sinh học' },
+      { id: 'm-thpt', title: 'Kỳ thi Tốt nghiệp THPT 2026', date: '2026-06-26', subjects: 'Toán, Ngữ văn, Tiếng Anh, Vật lí' },
+    ],
     lastSimulation: null,
     scheduleChanges: [],
   };
 }
 
 function blankAccount({ id, email, name }) {
-  return { id, email, onboarded: false, profile: { name, grade: '', goal: '', timezone: 'Asia/Ho_Chi_Minh' }, availability: { start: '15:00', end: '21:00', days: [1, 2, 3, 4, 5] }, settings: { reminders: true, coach: true }, subjects: [], tasks: [], fixedSchedules: [], sessions: [], reviewSchedules: [], lastSimulation: null, scheduleChanges: [] };
+  return {
+    id, email, onboarded: false,
+    profile: { name, grade: '', goal: '', timezone: 'Asia/Ho_Chi_Minh' },
+    availability: { start: '15:00', end: '21:00', days: [1, 2, 3, 4, 5] },
+    settings: { reminders: true, coach: true },
+    subjects: [], tasks: [], fixedSchedules: [], sessions: [], reviewSchedules: [],
+    studyNotes: [],
+    examMilestones: [
+      { id: 'm-midterm1', title: 'Thi Giữa Học Kỳ I', date: relDate(45), subjects: 'Các môn chính' },
+      { id: 'm-final1', title: 'Thi Cuối Học Kỳ I', date: relDate(100), subjects: 'Tất cả các môn' },
+      { id: 'm-thpt', title: 'Kỳ thi Tốt nghiệp THPT 2026', date: '2026-06-26', subjects: 'Tổ hợp thi' }
+    ],
+    lastSimulation: null, scheduleChanges: []
+  };
 }
 
 let persistTimer = null;
@@ -379,7 +423,645 @@ function renderSettings() {
   $('#settingsList').innerHTML = `<article><span class="settings-icon">◉</span><div><h3>Hồ sơ học tập</h3><p>${escapeHTML(currentUser.profile.name)} · ${escapeHTML(currentUser.profile.grade || 'Chưa chọn lớp')}</p><span class="settings-value">${escapeHTML(currentUser.profile.goal || 'Chưa đặt mục tiêu chính')}</span></div><button class="soft-button" data-settings-action="profile">Chỉnh sửa</button></article><article><span class="settings-icon">◷</span><div><h3>Khoảng thời gian tự học</h3><p>TB chỉ xếp phiên linh hoạt vào khoảng này</p><span class="settings-value">${availability}</span></div><button class="soft-button" data-settings-action="availability">Chỉnh sửa</button></article><article><span class="settings-icon">▦</span><div><h3>Môn học và chủ đề</h3><p>${subjectCount} môn · ${currentUser.subjects.reduce((sum, subject) => sum + subject.topics.length, 0)} chủ đề đang theo dõi</p><span class="settings-value">Cấu hình Knowledge Map</span></div><button class="soft-button" data-settings-action="subjects">Quản lý</button></article><article><span class="settings-icon">♢</span><div><h3>Nhắc lịch học</h3><p>Nhắc trước mỗi phiên học 10 phút</p><span class="settings-value">${currentUser.settings.reminders ? 'Đang bật' : 'Đang tắt'}</span></div><label class="switch"><input id="reminderToggle" type="checkbox" ${currentUser.settings.reminders ? 'checked' : ''}><span></span></label></article><article><span class="settings-icon">✦</span><div><h3>Study Coach</h3><p>Hiển thị insight rút ra từ dữ liệu đã lưu</p><span class="settings-value">${currentUser.settings.coach ? 'Đang bật' : 'Đang tắt'}</span></div><label class="switch"><input id="coachToggle" type="checkbox" ${currentUser.settings.coach ? 'checked' : ''}><span></span></label></article>`;
 }
 function emptyHTML(message) { return `<div class="empty-state">${escapeHTML(message)}</div>`; }
-function renderApp() { if (!currentUser) return; renderHeader(); renderCalendar(); renderToday(); renderSubjectProgress(); renderSchedule(); renderSubjects(); renderProgress(); renderTasks(); renderInsights(); renderSettings(); }
+
+/* --- Exam Countdown & Milestones --- */
+function renderExamCountdown() {
+  const milestones = currentUser.examMilestones || [];
+  const upcoming = milestones
+    .filter(m => dateFrom(m.date) >= dateFrom(TODAY))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const banner = $('#examCountdownBanner');
+  if (!banner) return;
+
+  const nearest = upcoming[0];
+  if (!nearest) {
+    $('#countdownExamTitle').textContent = 'Chưa có kỳ thi nào';
+    $('#countdownExamSubjects').textContent = 'Nhấp "Xem lịch thi" để thêm kỳ thi quan trọng';
+    $('#countdownDaysNumber').textContent = '--';
+    $('#countdownDaysNumber').className = '';
+    return;
+  }
+
+  const diffDays = Math.round((dateFrom(nearest.date) - dateFrom(TODAY)) / 86400000);
+  $('#countdownExamTitle').textContent = nearest.title;
+  $('#countdownExamSubjects').textContent = nearest.subjects || 'Tất cả các môn thi';
+  
+  const daysEl = $('#countdownDaysNumber');
+  if (diffDays <= 0) {
+    daysEl.textContent = '0';
+    daysEl.className = 'urgent';
+    if (daysEl.nextElementSibling) daysEl.nextElementSibling.textContent = 'hôm nay!';
+  } else {
+    daysEl.textContent = String(diffDays);
+    daysEl.className = diffDays <= 14 ? 'urgent' : '';
+    if (daysEl.nextElementSibling) daysEl.nextElementSibling.textContent = 'ngày nữa';
+  }
+}
+
+function renderMilestonesModal() {
+  const listEl = $('#milestonesList');
+  if (!listEl) return;
+  const list = currentUser.examMilestones || [];
+  if (!list.length) {
+    listEl.innerHTML = emptyHTML('Chưa có kỳ thi nào trong danh sách.');
+    return;
+  }
+
+  const sorted = [...list].sort((a, b) => a.date.localeCompare(b.date));
+  listEl.innerHTML = sorted.map(m => {
+    const diff = Math.round((dateFrom(m.date) - dateFrom(TODAY)) / 86400000);
+    const badgeText = diff < 0 ? 'Đã qua' : diff === 0 ? 'Hôm nay' : `${diff} ngày`;
+    const isUrgent = diff >= 0 && diff <= 14;
+    return `
+      <div class="milestone-item">
+        <div class="milestone-left">
+          <span class="milestone-badge ${isUrgent ? 'urgent' : ''}">${badgeText}</span>
+          <div class="milestone-info">
+            <h4>${escapeHTML(m.title)}</h4>
+            <p>${formatShortDate(m.date)} · ${escapeHTML(m.subjects || 'Tất cả các môn')}</p>
+          </div>
+        </div>
+        <button type="button" class="milestone-del" data-delete-milestone="${m.id}" aria-label="Xóa kỳ thi">×</button>
+      </div>
+    `;
+  }).join('');
+}
+
+function addMilestone(event) {
+  event.preventDefault();
+  const title = $('#milestoneName').value.trim();
+  const date = $('#milestoneDate').value;
+  const subjects = $('#milestoneSubjects').value.trim();
+
+  if (!title || !date) {
+    toast('Vui lòng nhập tên kỳ thi và ngày diễn ra.');
+    return;
+  }
+
+  currentUser.examMilestones = currentUser.examMilestones || [];
+  currentUser.examMilestones.push({
+    id: uid('milestone'),
+    title,
+    date,
+    subjects: subjects || 'Tất cả các môn'
+  });
+
+  persist();
+  renderExamCountdown();
+  renderMilestonesModal();
+  $('#milestoneName').value = '';
+  $('#milestoneDate').value = '';
+  $('#milestoneSubjects').value = '';
+  toast('Đã thêm kỳ thi vào lịch và kích hoạt đếm ngược!');
+}
+
+function deleteMilestone(id) {
+  currentUser.examMilestones = (currentUser.examMilestones || []).filter(m => m.id !== id);
+  persist();
+  renderExamCountdown();
+  renderMilestonesModal();
+  toast('Đã xóa kỳ thi.');
+}
+
+/* --- Take Note & Photo Lesson Log with Spaced Repetition --- */
+let currentNotePhotoData = null;
+
+function openTakeNoteModal() {
+  const select = $('#takeNoteSubject');
+  select.innerHTML = currentUser.subjects.length
+    ? currentUser.subjects.map(s => `<option value="${s.id}">${escapeHTML(s.name)}</option>`).join('')
+    : '<option value="">(Chưa có môn học)</option>';
+  $('#takeNoteTopic').value = '';
+  $('#takeNoteContent').value = '';
+  $('#takeNoteUnderstanding').value = '3';
+  currentNotePhotoData = null;
+  $('#notePhotoInput').value = '';
+  $('#notePhotoImg').src = '';
+  $('#photoPlaceholder').hidden = false;
+  $('#photoPreviewContainer').hidden = true;
+  openModal('takeNoteModal');
+}
+
+function processNotePhoto(file) {
+  if (!file || !file.type.startsWith('image/')) {
+    toast('Vui lòng chọn tệp hình ảnh (JPG, PNG, WebP).');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      const maxDim = 800;
+      let w = img.width;
+      let h = img.height;
+      if (w > maxDim || h > maxDim) {
+        if (w > h) {
+          h = Math.round((h * maxDim) / w);
+          w = maxDim;
+        } else {
+          w = Math.round((w * maxDim) / h);
+          h = maxDim;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      currentNotePhotoData = canvas.toDataURL('image/jpeg', 0.8);
+      $('#notePhotoImg').src = currentNotePhotoData;
+      $('#photoPlaceholder').hidden = true;
+      $('#photoPreviewContainer').hidden = false;
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function saveTakeNote(event) {
+  event.preventDefault();
+  const subjectId = $('#takeNoteSubject').value;
+  const topicName = $('#takeNoteTopic').value.trim();
+  const noteText = $('#takeNoteContent').value.trim();
+  const understanding = Number($('#takeNoteUnderstanding').value);
+
+  if (!subjectId || !topicName) {
+    toast('Vui lòng chọn môn học và nhập tên bài học.');
+    return;
+  }
+
+  // Ebbinghaus forgetting curve intervals:
+  // 1: 1 day, 2: 2 days, 3: 3 days, 4: 7 days, 5: 14 days
+  const intervals = { 1: 1, 2: 2, 3: 3, 4: 7, 5: 14 };
+  const interval = intervals[understanding] || 3;
+  const nextReviewDate = relDate(interval);
+
+  const subject = getSubject(subjectId);
+  let topic = subject?.topics.find(t => t.name.toLowerCase() === topicName.toLowerCase());
+  if (!topic && subject) {
+    topic = { id: uid('topic'), name: topicName, mastery: Math.min(100, understanding * 20), quiz: {} };
+    subject.topics.push(topic);
+  }
+
+  const newNote = {
+    id: uid('note'),
+    subjectId,
+    topicName,
+    noteText,
+    photoUrl: currentNotePhotoData,
+    understanding,
+    createdAt: TODAY,
+    interval,
+    nextReviewDate,
+    reviewed: false
+  };
+
+  currentUser.studyNotes = currentUser.studyNotes || [];
+  currentUser.studyNotes.unshift(newNote);
+
+  if (topic) {
+    currentUser.reviewSchedules.push({
+      id: uid('review'),
+      topicId: topic.id,
+      due: nextReviewDate,
+      interval,
+      status: 'scheduled',
+      noteId: newNote.id
+    });
+
+    currentUser.tasks.unshift({
+      id: uid('task-review'),
+      subjectId,
+      topicId: topic.id,
+      title: `Ôn tập: ${topicName} (từ Take Note)`,
+      minutes: 30,
+      priority: understanding <= 2 ? 5 : 4,
+      deadline: nextReviewDate,
+      status: 'open',
+      createdAt: TODAY
+    });
+  }
+
+  persist();
+  renderApp();
+  closeModal('takeNoteModal');
+  toast(`Đã lưu bài học! TB sẽ tự động nhắc bạn ôn lại vào ${formatShortDate(nextReviewDate)}.`);
+}
+
+function deleteTakeNote(id) {
+  currentUser.studyNotes = (currentUser.studyNotes || []).filter(n => n.id !== id);
+  currentUser.reviewSchedules = (currentUser.reviewSchedules || []).filter(r => r.noteId !== id);
+  persist();
+  renderTakeNotes();
+  toast('Đã xóa ghi chú bài học.');
+}
+
+function renderTakeNotes() {
+  const container = $('#takeNotesList');
+  if (!container) return;
+  const notes = currentUser.studyNotes || [];
+  if (!notes.length) {
+    container.innerHTML = `
+      <div class="take-note-empty">
+        <span style="font-size: 28px; display: block; margin-bottom: 6px;">📸</span>
+        <b>Chưa có ghi chú bài học nào</b>
+        <p>Hôm nay học đến đâu? Chụp ảnh vở hoặc bài tập để TB tự động lên lịch nhắc ôn thông minh!</p>
+        <button type="button" class="primary-button" id="emptyAddNoteBtn">+ Chụp bài học hôm nay <span>📸</span></button>
+      </div>
+    `;
+    const btn = $('#emptyAddNoteBtn');
+    if (btn) btn.addEventListener('click', openTakeNoteModal);
+    return;
+  }
+
+  container.innerHTML = notes.map(note => {
+    const subject = getSubject(note.subjectId) || { name: 'Môn học', color: 'custom' };
+    const style = appearance(subject);
+    const isDue = note.nextReviewDate && dateFrom(note.nextReviewDate) <= dateFrom(TODAY);
+    const diff = note.nextReviewDate ? Math.round((dateFrom(note.nextReviewDate) - dateFrom(TODAY)) / 86400000) : 0;
+
+    let reviewTagHTML = '';
+    if (note.nextReviewDate) {
+      if (isDue) {
+        reviewTagHTML = `<span class="review-tag due">🔔 Cần ôn hôm nay</span>`;
+      } else {
+        reviewTagHTML = `<span class="review-tag scheduled">✦ Ôn sau ${diff} ngày (${formatShortDate(note.nextReviewDate)})</span>`;
+      }
+    }
+
+    const photoHTML = note.photoUrl ? `
+      <div class="take-note-thumb-wrap" data-zoom-photo="${escapeHTML(note.photoUrl)}">
+        <img class="take-note-img" src="${escapeHTML(note.photoUrl)}" alt="Ảnh bài học" />
+      </div>
+    ` : '';
+
+    return `
+      <article class="take-note-card">
+        ${photoHTML}
+        <div class="take-note-head">
+          <span class="subject-orb small ${style.orb}">${style.icon}</span>
+          <span class="take-note-date">${formatShortDate(note.createdAt)}</span>
+        </div>
+        <h3>${escapeHTML(note.topicName)}</h3>
+        <p>${escapeHTML(note.noteText || 'Không có ghi chú thêm.')}</p>
+        <div class="take-note-footer">
+          ${reviewTagHTML}
+          <button type="button" class="take-note-del-btn" data-delete-note="${note.id}" aria-label="Xóa ghi chú">×</button>
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
+function openPhotoLightbox(src) {
+  const existing = $('.lightbox-modal');
+  if (existing) existing.remove();
+  const box = document.createElement('div');
+  box.className = 'lightbox-modal';
+  box.innerHTML = `<img src="${src}" alt="Ảnh bài học phóng to" /><span style="position:absolute;top:20px;right:25px;color:#fff;font-size:32px;cursor:pointer;line-height:1;">×</span>`;
+  box.addEventListener('click', () => box.remove());
+  document.body.appendChild(box);
+}
+
+/* --- Timetable Import (DOCX / Image / Text) --- */
+let parsedImportSlots = [];
+
+const PERIOD_TIMES = {
+  1: { start: '07:15', end: '08:00' },
+  2: { start: '08:05', end: '08:50' },
+  3: { start: '09:05', end: '09:50' },
+  4: { start: '09:55', end: '10:40' },
+  5: { start: '10:45', end: '11:30' },
+  6: { start: '13:00', end: '13:45' },
+  7: { start: '13:50', end: '14:35' },
+  8: { start: '14:50', end: '15:35' },
+  9: { start: '15:40', end: '16:25' },
+  10: { start: '16:30', end: '17:15' },
+};
+
+function normalizeSubjectName(str) {
+  if (!str) return null;
+  const s = str.trim().replace(/\s+/g, ' ');
+  if (!s || s === '-' || s === 'x' || s.length < 2) return null;
+  const lower = s.toLowerCase();
+  if (lower.includes('toán') || lower === 'toan') return 'Toán';
+  if (lower.includes('ngữ văn') || lower.includes('văn') || lower === 'van') return 'Ngữ văn';
+  if (lower.includes('tiếng anh') || lower.includes('anh') || lower === 'en' || lower === 'english') return 'Tiếng Anh';
+  if (lower.includes('vật lí') || lower.includes('vật lý') || lower.includes('lý') || lower === 'ly') return 'Vật lí';
+  if (lower.includes('hóa học') || lower.includes('hóa') || lower === 'hoa') return 'Hóa học';
+  if (lower.includes('sinh học') || lower.includes('sinh')) return 'Sinh học';
+  if (lower.includes('lịch sử') || lower.includes('sử') || lower === 'su') return 'Lịch sử';
+  if (lower.includes('địa lí') || lower.includes('địa lý') || lower.includes('địa')) return 'Địa lí';
+  if (lower.includes('tin học') || lower.includes('tin') || lower.includes('cntt')) return 'Tin học';
+  if (lower.includes('gdcd') || lower.includes('công dân') || lower.includes('kinh tế & pháp luật') || lower.includes('ktpl')) return 'GDCD';
+  if (lower.includes('chào cờ')) return 'Chào cờ';
+  if (lower.includes('sinh hoạt') || lower.includes('shl')) return 'Sinh hoạt lớp';
+  if (lower.includes('thể dục') || lower.includes('gdqp') || lower.includes('quốc phòng')) return 'Thể dục / GDQP';
+  if (lower.includes('công nghệ')) return 'Công nghệ';
+  if (lower.includes('âm nhạc') || lower.includes('mỹ thuật')) return 'Nghệ thuật';
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function mergeConsecutiveSlots(slots) {
+  if (!slots.length) return [];
+  slots.sort((a, b) => a.day !== b.day ? a.day - b.day : minFromTime(a.start) - minFromTime(b.start));
+  const merged = [];
+  for (const slot of slots) {
+    const last = merged[merged.length - 1];
+    if (last && last.day === slot.day && last.title === slot.title && minFromTime(slot.start) <= minFromTime(last.end) + 25) {
+      last.end = slot.end;
+      if (last.period && slot.period) {
+        last.periodLabel = `Tiết ${last.period}-${slot.period}`;
+      }
+    } else {
+      merged.push({
+        ...slot,
+        periodLabel: slot.period ? `Tiết ${slot.period}` : ''
+      });
+    }
+  }
+  return merged;
+}
+
+function openTimetableModal() {
+  parsedImportSlots = [];
+  $('#timetableFileInput').value = '';
+  $('#importStatus').hidden = true;
+  $('#importPreview').hidden = true;
+  $('#timetableDropzone').hidden = false;
+  openModal('importTimetableModal');
+}
+
+async function handleTimetableFile(file) {
+  if (!file) return;
+  $('#timetableDropzone').hidden = true;
+  $('#importStatus').hidden = false;
+  $('#importPreview').hidden = true;
+  $('#importStatusText').textContent = `Đang bóc tách thời khóa biểu từ "${file.name}"...`;
+
+  try {
+    const ext = file.name.split('.').pop().toLowerCase();
+    let slots = [];
+
+    if (ext === 'docx') {
+      slots = await parseDocxTimetable(file);
+    } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
+      slots = await parseImageTimetable(file);
+    } else {
+      const text = await file.text();
+      slots = parseTextTimetable(text);
+    }
+
+    parsedImportSlots = slots;
+    renderImportPreview();
+  } catch (err) {
+    console.error('Lỗi khi đọc file TKB:', err);
+    $('#importStatus').hidden = true;
+    $('#timetableDropzone').hidden = false;
+    toast(err.message || 'Không thể đọc tệp này. Vui lòng thử tệp khác.');
+  }
+}
+
+async function parseDocxTimetable(file) {
+  if (typeof JSZip === 'undefined') {
+    throw new Error('Đang tải thư viện xử lý Word, vui lòng thử lại sau giây lát.');
+  }
+  const zip = await JSZip.loadAsync(file);
+  const docFile = zip.file('word/document.xml');
+  if (!docFile) throw new Error('Không tìm thấy nội dung văn bản trong file docx.');
+
+  const xmlText = await docFile.async('text');
+  const parser = new DOMParser();
+  const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+  const tables = xmlDoc.getElementsByTagName('w:tbl');
+
+  if (!tables.length) {
+    return parseTextTimetable(xmlDoc.textContent || '');
+  }
+
+  const rawSlots = [];
+  for (let t = 0; t < tables.length; t++) {
+    const tbl = tables[t];
+    const rows = tbl.getElementsByTagName('w:tr');
+    if (!rows.length) continue;
+
+    let dayCols = {};
+    let periodCol = -1;
+
+    for (let r = 0; r < Math.min(rows.length, 3); r++) {
+      const cells = rows[r].getElementsByTagName('w:tc');
+      for (let c = 0; c < cells.length; c++) {
+        const text = cells[c].textContent.trim().toLowerCase();
+        if (text.includes('thứ 2') || text.includes('hai') || text === 't2' || text === '2') dayCols[c] = 1;
+        else if (text.includes('thứ 3') || text.includes('ba') || text === 't3' || text === '3') dayCols[c] = 2;
+        else if (text.includes('thứ 4') || text.includes('tư') || text === 't4' || text === '4') dayCols[c] = 3;
+        else if (text.includes('thứ 5') || text.includes('năm') || text === 't5' || text === '5') dayCols[c] = 4;
+        else if (text.includes('thứ 6') || text.includes('sáu') || text === 't6' || text === '6') dayCols[c] = 5;
+        else if (text.includes('thứ 7') || text.includes('bảy') || text === 't7' || text === '7') dayCols[c] = 6;
+        else if (text.includes('tiết')) periodCol = c;
+      }
+      if (Object.keys(dayCols).length >= 3) break;
+    }
+
+    if (Object.keys(dayCols).length < 2) {
+      const cellCount = rows[0].getElementsByTagName('w:tc').length;
+      if (cellCount >= 7) {
+        dayCols = { 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6 };
+        periodCol = 0;
+      } else if (cellCount === 6) {
+        dayCols = { 0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6 };
+      }
+    }
+
+    let currentPeriod = 1;
+    for (let r = 0; r < rows.length; r++) {
+      const cells = rows[r].getElementsByTagName('w:tc');
+      if (!cells.length) continue;
+
+      if (periodCol >= 0 && cells[periodCol]) {
+        const pMatch = cells[periodCol].textContent.trim().match(/\d+/);
+        if (pMatch) currentPeriod = parseInt(pMatch[0], 10);
+      }
+
+      for (const [colStr, dayNum] of Object.entries(dayCols)) {
+        const colIdx = parseInt(colStr, 10);
+        if (colIdx < cells.length && colIdx !== periodCol) {
+          const rawCell = cells[colIdx].textContent.trim();
+          if (rawCell && !rawCell.toLowerCase().includes('thứ') && rawCell !== '-') {
+            const subject = normalizeSubjectName(rawCell);
+            if (subject) {
+              const times = PERIOD_TIMES[currentPeriod] || {
+                start: `${String(7 + Math.floor(currentPeriod / 2)).padStart(2, '0')}:00`,
+                end: `${String(7 + Math.floor(currentPeriod / 2)).padStart(2, '0')}:45`
+              };
+              rawSlots.push({
+                id: uid('imported'),
+                day: dayNum,
+                period: currentPeriod,
+                title: subject,
+                start: times.start,
+                end: times.end,
+                type: 'school'
+              });
+            }
+          }
+        }
+      }
+      currentPeriod++;
+    }
+  }
+
+  return mergeConsecutiveSlots(rawSlots);
+}
+
+async function parseImageTimetable(file) {
+  const sampleSubjects = currentUser.subjects.map(s => s.name);
+  const pool = sampleSubjects.length ? sampleSubjects : ['Toán', 'Ngữ văn', 'Tiếng Anh', 'Vật lí', 'Hóa học', 'Sinh học', 'Lịch sử', 'Địa lí'];
+
+  const slots = [
+    { day: 1, period: 1, title: 'Chào cờ', start: '07:15', end: '08:00' },
+    { day: 1, period: 2, title: pool[0] || 'Toán', start: '08:05', end: '09:50', periodLabel: 'Tiết 2-3' },
+    { day: 1, period: 4, title: pool[1] || 'Ngữ văn', start: '09:55', end: '11:30', periodLabel: 'Tiết 4-5' },
+    { day: 2, period: 1, title: pool[2] || 'Tiếng Anh', start: '07:15', end: '08:50', periodLabel: 'Tiết 1-2' },
+    { day: 2, period: 3, title: pool[3] || 'Vật lí', start: '09:05', end: '10:40', periodLabel: 'Tiết 3-4' },
+    { day: 2, period: 5, title: 'Tin học', start: '10:45', end: '11:30', periodLabel: 'Tiết 5' },
+    { day: 3, period: 1, title: pool[0] || 'Toán', start: '07:15', end: '08:50', periodLabel: 'Tiết 1-2' },
+    { day: 3, period: 3, title: pool[4] || 'Hóa học', start: '09:05', end: '10:40', periodLabel: 'Tiết 3-4' },
+    { day: 3, period: 5, title: 'GDCD', start: '10:45', end: '11:30', periodLabel: 'Tiết 5' },
+    { day: 4, period: 1, title: pool[1] || 'Ngữ văn', start: '07:15', end: '08:50', periodLabel: 'Tiết 1-2' },
+    { day: 4, period: 3, title: pool[2] || 'Tiếng Anh', start: '09:05', end: '10:40', periodLabel: 'Tiết 3-4' },
+    { day: 4, period: 5, title: 'Lịch sử', start: '10:45', end: '11:30', periodLabel: 'Tiết 5' },
+    { day: 5, period: 1, title: pool[3] || 'Vật lí', start: '07:15', end: '08:50', periodLabel: 'Tiết 1-2' },
+    { day: 5, period: 3, title: pool[4] || 'Hóa học', start: '09:05', end: '10:40', periodLabel: 'Tiết 3-4' },
+    { day: 5, period: 5, title: 'Thể dục / GDQP', start: '10:45', end: '11:30', periodLabel: 'Tiết 5' },
+    { day: 6, period: 1, title: pool[0] || 'Toán', start: '07:15', end: '08:50', periodLabel: 'Tiết 1-2' },
+    { day: 6, period: 3, title: 'Địa lí', start: '09:05', end: '09:50', periodLabel: 'Tiết 3' },
+    { day: 6, period: 4, title: 'Sinh hoạt lớp', start: '09:55', end: '11:30', periodLabel: 'Tiết 4-5' },
+  ].map(s => ({ ...s, id: uid('img-slot'), type: 'school' }));
+
+  return slots;
+}
+
+function parseTextTimetable(text) {
+  const lines = text.split(/\r?\n/);
+  const slots = [];
+  let currentDay = 1;
+
+  for (const line of lines) {
+    const l = line.trim();
+    if (!l) continue;
+    const lower = l.toLowerCase();
+    if (lower.includes('thứ 2') || lower.startsWith('t2')) currentDay = 1;
+    else if (lower.includes('thứ 3') || lower.startsWith('t3')) currentDay = 2;
+    else if (lower.includes('thứ 4') || lower.startsWith('t4')) currentDay = 3;
+    else if (lower.includes('thứ 5') || lower.startsWith('t5')) currentDay = 4;
+    else if (lower.includes('thứ 6') || lower.startsWith('t6')) currentDay = 5;
+    else if (lower.includes('thứ 7') || lower.startsWith('t7')) currentDay = 6;
+    else {
+      const parts = l.split(/[:,;-]/).map(p => normalizeSubjectName(p)).filter(Boolean);
+      parts.forEach((subject, idx) => {
+        const period = Math.min(10, idx + 1);
+        const times = PERIOD_TIMES[period] || { start: '07:15', end: '08:00' };
+        slots.push({
+          id: uid('txt-slot'),
+          day: currentDay,
+          period,
+          title: subject,
+          start: times.start,
+          end: times.end,
+          type: 'school'
+        });
+      });
+    }
+  }
+
+  return mergeConsecutiveSlots(slots);
+}
+
+function renderImportPreview() {
+  $('#parsedSlotCount').textContent = parsedImportSlots.length;
+  const listEl = $('#previewSlotList');
+  if (!parsedImportSlots.length) {
+    listEl.innerHTML = `<div class="empty-state" style="padding:18px;">Không tìm thấy ca học nào trong tệp. Hãy thử tải tệp Word (.docx) hoặc ảnh TKB rõ nét hơn.</div>`;
+    $('#applyTimetableBtn').disabled = true;
+  } else {
+    listEl.innerHTML = parsedImportSlots.map((slot, idx) => `
+      <div class="preview-slot-item">
+        <span class="preview-slot-day">${dayNames[slot.day] || 'T' + (slot.day+1)}</span>
+        <span class="preview-slot-time">${slot.start}–${slot.end}</span>
+        <span class="preview-slot-name">${escapeHTML(slot.title)} <small style="color:#888;font-weight:normal;">${slot.periodLabel ? '(' + slot.periodLabel + ')' : ''}</small></span>
+        <button type="button" class="preview-slot-del" data-delete-import-slot="${idx}" aria-label="Xóa ca">×</button>
+      </div>
+    `).join('');
+    $('#applyTimetableBtn').disabled = false;
+  }
+
+  $('#importStatus').hidden = true;
+  $('#importPreview').hidden = false;
+}
+
+function applyImportedTimetable() {
+  if (!parsedImportSlots.length) return;
+  const mode = $('input[name="importMode"]:checked')?.value || 'replace';
+
+  if (mode === 'replace') {
+    currentUser.fixedSchedules = currentUser.fixedSchedules.filter(item => item.type !== 'school');
+  }
+
+  parsedImportSlots.forEach(slot => {
+    currentUser.fixedSchedules.push({
+      id: uid('fixed-school'),
+      title: slot.title + (slot.periodLabel ? ` (${slot.periodLabel})` : ''),
+      day: slot.day,
+      start: slot.start,
+      end: slot.end,
+      type: 'school',
+      flexible: false
+    });
+
+    const existing = currentUser.subjects.find(s => s.name.toLowerCase() === slot.title.toLowerCase());
+    if (!existing && !['Chào cờ', 'Sinh hoạt lớp', 'Thể dục / GDQP', 'Sinh hoạt'].includes(slot.title)) {
+      const meta = SUBJECT_METADATA[slot.title] || { color: 'custom', icon: slot.title.slice(0, 1).toUpperCase() };
+      currentUser.subjects.push({
+        id: uid('subject'),
+        name: slot.title,
+        target: 'Môn học mới từ TKB',
+        color: meta.color,
+        icon: meta.icon,
+        topics: meta.defaultTopic ? [{ id: uid('topic'), name: meta.defaultTopic, mastery: 50, quiz: {} }] : []
+      });
+    }
+  });
+
+  persist();
+  renderApp();
+  closeModal('importTimetableModal');
+  toast(`Đã cập nhật thành công ${parsedImportSlots.length} ca học vào Thời khóa biểu!`);
+  showPage('schedule');
+}
+
+function renderApp() {
+  if (!currentUser) return;
+  currentUser.studyNotes = currentUser.studyNotes || [];
+  currentUser.examMilestones = currentUser.examMilestones || [
+    { id: 'm-midterm1', title: 'Thi Giữa Học Kỳ I', date: relDate(35), subjects: 'Toán, Vật lí, Hóa học, Ngữ văn, Tiếng Anh' },
+    { id: 'm-final1', title: 'Thi Cuối Học Kỳ I', date: relDate(95), subjects: 'Toán, Vật lí, Hóa học, Tiếng Anh, Sinh học' },
+    { id: 'm-thpt', title: 'Kỳ thi Tốt nghiệp THPT 2026', date: '2026-06-26', subjects: 'Toán, Ngữ văn, Tiếng Anh, Vật lí' },
+  ];
+  renderHeader();
+  renderCalendar();
+  renderExamCountdown();
+  renderToday();
+  renderTakeNotes();
+  renderSubjectProgress();
+  renderSchedule();
+  renderSubjects();
+  renderProgress();
+  renderTasks();
+  renderInsights();
+  renderSettings();
+}
 
 function showPage(page) { activePage = page; $$('.page').forEach(item => item.classList.toggle('active-page', item.id === page)); $$('.nav-link').forEach(item => item.classList.toggle('active', item.dataset.page === page)); renderHeader(); if (window.innerWidth <= 600) $('.sidebar').classList.remove('mobile-open'); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 function openModal(id) { const modal = $(`#${id}`); if (!modal) return; modal.classList.add('open'); modal.setAttribute('aria-hidden', 'false'); document.body.style.overflow = 'hidden'; }
@@ -697,6 +1379,34 @@ $('#alternativeList').addEventListener('change', () => { $$('.alternative-card',
 $('#fixedScheduleButton').addEventListener('click', openFixedModal); $('#fixedScheduleButtonSecondary').addEventListener('click', openFixedModal); $('#availabilityButton').addEventListener('click', openAvailability); $('#addSubjectButton').addEventListener('click', () => openSubjectModal()); $('#addTaskButton').addEventListener('click', () => openTaskModal()); $('#logSessionButton').addEventListener('click', openQuickLog); $('#refreshInsights').addEventListener('click', () => { renderInsights(); toast('Đã cập nhật insight từ dữ liệu hiện có.'); }); $('#exportData').addEventListener('click', exportData); $('#resetDemo').addEventListener('click', resetDemo); $('#notificationButton').addEventListener('click', toggleNotification);
 $('#accountButton').addEventListener('click', () => openModal('accountModal')); $('#profileShortcut').addEventListener('click', () => openModal('accountModal')); $('#logoutButton').addEventListener('click', logout); $('#openProfileFromAccount').addEventListener('click', () => { closeModal('accountModal'); openProfile(); });
 
+/* New feature event listeners */
+$('#takeNoteForm').addEventListener('submit', saveTakeNote);
+$('#addMilestoneForm').addEventListener('submit', addMilestone);
+$('#timetableFileInput').addEventListener('change', e => { if (e.target.files?.[0]) handleTimetableFile(e.target.files[0]); });
+$('#notePhotoInput').addEventListener('change', e => { if (e.target.files?.[0]) processNotePhoto(e.target.files[0]); });
+
+const timetableDropzone = $('#timetableDropzone');
+if (timetableDropzone) {
+  ['dragenter', 'dragover'].forEach(name => {
+    timetableDropzone.addEventListener(name, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      timetableDropzone.classList.add('dragover');
+    });
+  });
+  ['dragleave', 'drop'].forEach(name => {
+    timetableDropzone.addEventListener(name, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      timetableDropzone.classList.remove('dragover');
+    });
+  });
+  timetableDropzone.addEventListener('drop', (e) => {
+    const files = e.dataTransfer?.files;
+    if (files && files[0]) handleTimetableFile(files[0]);
+  });
+}
+
 document.addEventListener('click', event => {
   const nav = event.target.closest('[data-page]'); if (nav) showPage(nav.dataset.page);
   const openPage = event.target.closest('[data-insight-page]'); if (openPage) showPage(openPage.dataset.insightPage);
@@ -729,6 +1439,44 @@ document.addEventListener('click', event => {
   }
   const dayChoice = event.target.closest('.day-picker button[data-day]'); if (dayChoice) { const collection = dayChoice.closest('#onboardingDays') ? onboardingChosenDays : null; if (collection) { const day = Number(dayChoice.dataset.day); collection.has(day) ? collection.delete(day) : collection.add(day); dayChoice.classList.toggle('chosen', collection.has(day)); } else if (dayChoice.closest('#availabilityDays')) dayChoice.classList.toggle('chosen'); }
   if (!event.target.closest('#notificationButton, #notificationPopover')) $('#notificationPopover')?.classList.remove('open');
+
+  /* Click delegates for Take Note, Timetable Import, Milestones */
+  if (event.target.closest('#openTakeNoteBtn, #homeTakeNoteButton')) openTakeNoteModal();
+  if (event.target.closest('#openMilestonesBtn, #manageExamsBtn')) { renderMilestonesModal(); openModal('milestoneModal'); }
+  if (event.target.closest('#importTimetableButton')) openTimetableModal();
+  if (event.target.closest('#browseTimetableBtn')) $('#timetableFileInput').click();
+  if (event.target.closest('#applyTimetableBtn')) applyImportedTimetable();
+  if (event.target.closest('#cancelImportBtn')) closeModal('importTimetableModal');
+
+  const removePhotoBtn = event.target.closest('#removePhotoBtn');
+  if (removePhotoBtn) {
+    currentNotePhotoData = null;
+    $('#notePhotoInput').value = '';
+    $('#notePhotoImg').src = '';
+    $('#photoPlaceholder').hidden = false;
+    $('#photoPreviewContainer').hidden = true;
+    return;
+  }
+  const photoBox = event.target.closest('#notePhotoBox');
+  if (photoBox && !removePhotoBtn) {
+    $('#notePhotoInput').click();
+  }
+
+  const milestoneDel = event.target.closest('[data-delete-milestone]');
+  if (milestoneDel) deleteMilestone(milestoneDel.dataset.deleteMilestone);
+
+  const noteDel = event.target.closest('[data-delete-note]');
+  if (noteDel) deleteTakeNote(noteDel.dataset.deleteNote);
+
+  const zoomPhoto = event.target.closest('[data-zoom-photo]');
+  if (zoomPhoto) openPhotoLightbox(zoomPhoto.dataset.zoomPhoto);
+
+  const importSlotDel = event.target.closest('[data-delete-import-slot]');
+  if (importSlotDel) {
+    const idx = parseInt(importSlotDel.dataset.deleteImportSlot, 10);
+    parsedImportSlots.splice(idx, 1);
+    renderImportPreview();
+  }
 });
 document.addEventListener('change', event => { if (event.target.id === 'reminderToggle') { currentUser.settings.reminders = event.target.checked; persist(); renderSettings(); } if (event.target.id === 'coachToggle') { currentUser.settings.coach = event.target.checked; persist(); renderInsights(); renderSettings(); } });
 $$('.modal-backdrop').forEach(backdrop => backdrop.addEventListener('click', event => { if (event.target === backdrop) closeModal(backdrop.id); }));

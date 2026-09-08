@@ -97,6 +97,37 @@ function ensureSeed() {
       { id: 'review-integral', topicId: 'integral', due: relDate(0), interval: 7, status: 'scheduled' },
       { id: 'review-derivatives', topicId: 'derivatives', due: relDate(3), interval: 3, status: 'scheduled' },
     ],
+    studyNotes: [
+      {
+        id: 'note-sample-1',
+        subjectId: 'math',
+        topicName: 'Đạo hàm hàm hợp & Quy tắc chuỗi',
+        noteText: 'Đã nắm công thức u^n, sin(u), cos(u). Cần làm thêm bài tập nâng cao phân thức bậc 2.',
+        photoUrl: null,
+        understanding: 4,
+        createdAt: relDate(-1),
+        interval: 3,
+        nextReviewDate: relDate(2),
+        reviewed: false
+      },
+      {
+        id: 'note-sample-2',
+        subjectId: 'informatics',
+        topicName: 'Quy hoạch động trên mảng 2 chiều',
+        noteText: 'Xong bài toán Tìm đường đi có tổng lớn nhất. Cần ôn lại cách truy vết kết quả.',
+        photoUrl: null,
+        understanding: 3,
+        createdAt: relDate(-2),
+        interval: 1,
+        nextReviewDate: relDate(0),
+        reviewed: false
+      }
+    ],
+    examMilestones: [
+      { id: 'm-midterm1', title: 'Thi Giữa Học Kỳ I', date: relDate(35), subjects: 'Toán, Vật lí, Hóa học, Ngữ văn, Tiếng Anh' },
+      { id: 'm-final1', title: 'Thi Cuối Học Kỳ I', date: relDate(95), subjects: 'Toán, Vật lí, Hóa học, Tiếng Anh, Sinh học' },
+      { id: 'm-thpt', title: 'Kỳ thi Tốt nghiệp THPT 2026', date: '2026-06-26', subjects: 'Toán, Ngữ văn, Tiếng Anh, Vật lí' },
+    ],
     lastSimulation: null,
     scheduleChanges: [],
   };
@@ -146,6 +177,12 @@ http.createServer(async (req, res) => {
         availability: { start: '15:00', end: '21:00', days: [1, 2, 3, 4, 5] },
         settings: { reminders: true, coach: true },
         subjects: [], tasks: [], fixedSchedules: [], sessions: [], reviewSchedules: [],
+        studyNotes: [],
+        examMilestones: [
+          { id: 'm-midterm1', title: 'Thi Giữa Học Kỳ I', date: '2026-10-20', subjects: 'Các môn chính' },
+          { id: 'm-final1', title: 'Thi Cuối Học Kỳ I', date: '2026-12-25', subjects: 'Tất cả các môn' },
+          { id: 'm-thpt', title: 'Kỳ thi Tốt nghiệp THPT 2026', date: '2026-06-26', subjects: 'Tổ hợp thi' }
+        ],
         lastSimulation: null, scheduleChanges: [],
       };
       users.push(newUser);
