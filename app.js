@@ -23,11 +23,34 @@ const DEMO_EMAIL = 'minhanh@tb.demo';
 const DEMO_PASSWORD = 'demo123';
 const dayNames = ['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy'];
 
+const EXAM_COMBINATIONS = {
+  'A00': ['Toán', 'Vật lí', 'Hóa học'],
+  'A01': ['Toán', 'Vật lí', 'Tiếng Anh'],
+  'B00': ['Toán', 'Hóa học', 'Sinh học'],
+  'C00': ['Ngữ văn', 'Lịch sử', 'Địa lí'],
+  'D01': ['Toán', 'Ngữ văn', 'Tiếng Anh'],
+  'D07': ['Toán', 'Hóa học', 'Tiếng Anh'],
+};
+
+const SUBJECT_METADATA = {
+  'Toán': { color: 'math', icon: '∫', defaultTopic: 'Hàm số & Đạo hàm' },
+  'Ngữ văn': { color: 'literature', icon: '✎', defaultTopic: 'Nghị luận văn học' },
+  'Tiếng Anh': { color: 'english', icon: 'A', defaultTopic: 'Ngữ pháp & Từ vựng' },
+  'Vật lí': { color: 'physics', icon: '⚡', defaultTopic: 'Dao động cơ' },
+  'Hóa học': { color: 'chemistry', icon: '🧪', defaultTopic: 'Este & Lipit' },
+  'Sinh học': { color: 'biology', icon: '🧬', defaultTopic: 'Cơ chế di truyền' },
+  'Lịch sử': { color: 'history', icon: '🏛', defaultTopic: 'Lịch sử Việt Nam (1919 - 1975)' },
+  'Địa lí': { color: 'geography', icon: '🌍', defaultTopic: 'Địa lí tự nhiên & dân cư' },
+  'Tin học': { color: 'info', icon: '</>', defaultTopic: 'Thuật toán cơ bản' },
+  'GDCD': { color: 'civics', icon: '⚖', defaultTopic: 'Công dân với Pháp luật' },
+  'IELTS': { color: 'ielts', icon: '★', defaultTopic: 'Reading & Writing' },
+};
+
 let currentUser = null;
 let activePage = 'home';
 let taskFilter = 'open';
 let onboardingStep = 1;
-let onboardingChosenSubjects = new Set(['Toán']);
+let onboardingChosenSubjects = new Set(EXAM_COMBINATIONS['A00']);
 let onboardingChosenDays = new Set([1, 2, 3, 4, 5]);
 let selectedTimerTask = null;
 let timerSeconds = 0;
@@ -120,7 +143,19 @@ function getTopic(id) { for (const subject of currentUser.subjects) { const topi
 function getTask(id) { return currentUser.tasks.find(task => task.id === id); }
 
 function appearance(subject) {
-  const palette = { math: ['math', 'math-color', 'math-card'], info: ['info', 'info-color', 'info-card'], ielts: ['ielts', 'ielts-color', 'ielts-card'] };
+  const palette = {
+    math: ['math', 'math-color', 'math-card'],
+    literature: ['literature', 'literature-color', 'literature-card'],
+    english: ['english', 'english-color', 'english-card'],
+    physics: ['physics', 'physics-color', 'physics-card'],
+    chemistry: ['chemistry', 'chemistry-color', 'chemistry-card'],
+    biology: ['biology', 'biology-color', 'biology-card'],
+    history: ['history', 'history-color', 'history-card'],
+    geography: ['geography', 'geography-color', 'geography-card'],
+    info: ['info', 'info-color', 'info-card'],
+    civics: ['civics', 'civics-color', 'civics-card'],
+    ielts: ['ielts', 'ielts-color', 'ielts-card'],
+  };
   const [orb, category, card] = palette[subject.color] || ['custom', 'math-color', 'math-card'];
   return { orb, category, card, icon: subject.icon || subject.name.slice(0, 1).toUpperCase(), badge: subject.name.length > 5 ? subject.name.slice(0, 3).toUpperCase() : subject.name.toUpperCase() };
 }
@@ -306,7 +341,7 @@ function saveTask(event) { event.preventDefault(); const id = $('#taskId').value
 function deleteTask() { const id = $('#taskId').value; if (!id) return; currentUser.tasks = currentUser.tasks.filter(task => task.id !== id); persist(); renderApp(); closeModal('taskModal'); toast('Đã xoá nhiệm vụ.'); }
 
 function openSubjectModal(subject = null) { $('#subjectModalTitle').textContent = subject ? 'Chỉnh sửa môn học' : 'Thêm môn học'; $('#subjectId').value = subject?.id || ''; $('#subjectName').value = subject?.name || ''; $('#subjectTarget').value = subject?.target || ''; $('#subjectFirstTopic').value = ''; $('#subjectFirstTopic').parentElement.hidden = Boolean(subject); $('#deleteSubjectButton').hidden = !subject; openModal('subjectModal'); }
-function saveSubject(event) { event.preventDefault(); const id = $('#subjectId').value; const name = $('#subjectName').value.trim(); if (!name) return; if (id) { const subject = getSubject(id); subject.name = name; subject.target = $('#subjectTarget').value.trim(); } else { const color = ['math', 'info', 'ielts', 'custom'][currentUser.subjects.length % 4]; const firstTopic = $('#subjectFirstTopic').value.trim(); currentUser.subjects.push({ id: uid('subject'), name, target: $('#subjectTarget').value.trim(), color, icon: color === 'math' ? '∫' : color === 'info' ? '&lt;/&gt;' : color === 'ielts' ? 'A' : name.slice(0, 1).toUpperCase(), topics: firstTopic ? [{ id: uid('topic'), name: firstTopic, mastery: 50, quiz: {} }] : [] }); } persist(); renderApp(); closeModal('subjectModal'); toast(id ? 'Đã lưu môn học.' : 'Đã thêm môn học.'); }
+function saveSubject(event) { event.preventDefault(); const id = $('#subjectId').value; const name = $('#subjectName').value.trim(); if (!name) return; if (id) { const subject = getSubject(id); subject.name = name; subject.target = $('#subjectTarget').value.trim(); } else { const meta = SUBJECT_METADATA[name] || { color: 'custom', icon: name.slice(0, 1).toUpperCase() }; const firstTopic = $('#subjectFirstTopic').value.trim() || meta.defaultTopic; currentUser.subjects.push({ id: uid('subject'), name, target: $('#subjectTarget').value.trim(), color: meta.color, icon: meta.icon, topics: firstTopic ? [{ id: uid('topic'), name: firstTopic, mastery: 50, quiz: {} }] : [] }); } persist(); renderApp(); closeModal('subjectModal'); toast(id ? 'Đã lưu môn học.' : 'Đã thêm môn học.'); }
 function deleteSubject() { const id = $('#subjectId').value; if (!id) return; const topicIds = getSubject(id).topics.map(topic => topic.id); currentUser.subjects = currentUser.subjects.filter(subject => subject.id !== id); currentUser.tasks = currentUser.tasks.filter(task => task.subjectId !== id); currentUser.sessions = currentUser.sessions.filter(session => !topicIds.includes(session.topicId)); currentUser.reviewSchedules = currentUser.reviewSchedules.filter(review => !topicIds.includes(review.topicId)); persist(); renderApp(); closeModal('subjectModal'); toast('Đã xoá môn học và dữ liệu liên quan.'); }
 function openTopicModal(subjectId, topic = null) { $('#topicModalTitle').textContent = topic ? 'Chỉnh sửa chủ đề' : 'Thêm chủ đề'; $('#topicSubjectId').value = subjectId; $('#topicId').value = topic?.id || ''; $('#topicName').value = topic?.name || ''; $('#topicMastery').value = topic?.mastery || 50; $('#topicMasteryOutput').textContent = `${topic?.mastery || 50}%`; $('#deleteTopicButton').hidden = !topic; openModal('topicModal'); }
 function saveTopic(event) { event.preventDefault(); const subject = getSubject($('#topicSubjectId').value); const id = $('#topicId').value; const name = $('#topicName').value.trim(); if (!subject || !name) return; const entry = { id: id || uid('topic'), name, mastery: Number($('#topicMastery').value), quiz: id ? getTopic(id).quiz || {} : {} }; const index = subject.topics.findIndex(topic => topic.id === id); if (index >= 0) subject.topics[index] = entry; else subject.topics.push(entry); persist(); renderApp(); closeModal('topicModal'); toast(id ? 'Đã cập nhật chủ đề.' : 'Đã thêm chủ đề.'); }
@@ -423,8 +458,71 @@ function logout() {
   $('#loginPassword').value = '';
   toast('Đã đăng xuất.');
 }
-function resetOnboarding() { onboardingStep = 1; onboardingChosenSubjects = new Set(['Toán']); onboardingChosenDays = new Set([1, 2, 3, 4, 5]); $$('.onboarding-step').forEach(step => step.classList.toggle('active', Number(step.dataset.onboardingStep) === 1)); $$('.onboarding-dots i').forEach((dot, index) => dot.classList.toggle('active', index === 0)); $('#onboardingNext').innerHTML = 'Tiếp tục <span>→</span>'; $$('#onboardingSubjects button').forEach(button => button.classList.toggle('chosen', onboardingChosenSubjects.has(button.dataset.subjectChoice))); $$('#onboardingDays button').forEach(button => button.classList.toggle('chosen', onboardingChosenDays.has(Number(button.dataset.day)))); }
-function advanceOnboarding() { if (onboardingStep < 4) { onboardingStep += 1; $$('.onboarding-step').forEach(step => step.classList.toggle('active', Number(step.dataset.onboardingStep) === onboardingStep)); $$('.onboarding-dots i').forEach((dot, index) => dot.classList.toggle('active', index < onboardingStep)); $('#onboardingNext').innerHTML = onboardingStep === 4 ? 'Tạo kế hoạch đầu tiên <span>✦</span>' : 'Tiếp tục <span>→</span>'; return; } currentUser.profile.grade = $('#onboardingGrade').value.trim(); currentUser.profile.goal = $('#onboardingGoal').value.trim(); currentUser.availability = { start: $('#onboardingStart').value, end: $('#onboardingEnd').value, days: [...onboardingChosenDays] }; const colors = { 'Toán': ['math', '∫'], 'Tin học': ['info', '&lt;/&gt;'], IELTS: ['ielts', 'A'] }; currentUser.subjects = [...onboardingChosenSubjects].map(name => ({ id: uid('subject'), name, target: '', color: colors[name][0], icon: colors[name][1], topics: [{ id: uid('topic'), name: name === 'Toán' ? 'Chủ đề đầu tiên' : name === 'Tin học' ? 'Thuật toán cơ bản' : 'Reading', mastery: 50, quiz: {} }] })); currentUser.onboarded = true; persist(); renderApp(); closeModal('onboardingModal'); toast('Kế hoạch đầu tiên đã sẵn sàng. Hãy thêm nhiệm vụ để TB ưu tiên lịch.'); }
+function syncOnboardingCombosUI() {
+  const chosenArray = [...onboardingChosenSubjects].sort();
+  let matchedCombo = null;
+  for (const [code, subs] of Object.entries(EXAM_COMBINATIONS)) {
+    if (subs.length === chosenArray.length && [...subs].sort().every((s, i) => s === chosenArray[i])) {
+      matchedCombo = code;
+      break;
+    }
+  }
+  $$('#onboardingCombos button').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.combo === matchedCombo);
+  });
+  $$('#onboardingSubjects button').forEach(btn => {
+    btn.classList.toggle('chosen', onboardingChosenSubjects.has(btn.dataset.subjectChoice));
+  });
+}
+
+function resetOnboarding() {
+  onboardingStep = 1;
+  onboardingChosenSubjects = new Set(EXAM_COMBINATIONS['A00']);
+  onboardingChosenDays = new Set([1, 2, 3, 4, 5]);
+  $$('.onboarding-step').forEach(step => step.classList.toggle('active', Number(step.dataset.onboardingStep) === 1));
+  $$('.onboarding-dots i').forEach((dot, index) => dot.classList.toggle('active', index === 0));
+  $('#onboardingNext').innerHTML = 'Tiếp tục <span>→</span>';
+  syncOnboardingCombosUI();
+  $$('#onboardingDays button').forEach(button => button.classList.toggle('chosen', onboardingChosenDays.has(Number(button.dataset.day))));
+}
+
+function advanceOnboarding() {
+  if (onboardingStep === 2 && onboardingChosenSubjects.size === 0) {
+    toast('Hãy chọn ít nhất một môn học hoặc tổ hợp thi.');
+    return;
+  }
+  if (onboardingStep < 4) {
+    onboardingStep += 1;
+    $$('.onboarding-step').forEach(step => step.classList.toggle('active', Number(step.dataset.onboardingStep) === onboardingStep));
+    $$('.onboarding-dots i').forEach((dot, index) => dot.classList.toggle('active', index < onboardingStep));
+    $('#onboardingNext').innerHTML = onboardingStep === 4 ? 'Tạo kế hoạch đầu tiên <span>✦</span>' : 'Tiếp tục <span>→</span>';
+    return;
+  }
+  currentUser.profile.grade = $('#onboardingGrade').value.trim();
+  currentUser.profile.goal = $('#onboardingGoal').value.trim();
+  currentUser.availability = { start: $('#onboardingStart').value, end: $('#onboardingEnd').value, days: [...onboardingChosenDays] };
+  currentUser.subjects = [...onboardingChosenSubjects].map(name => {
+    const meta = SUBJECT_METADATA[name] || { color: 'math', icon: '✦', defaultTopic: 'Chủ đề đầu tiên' };
+    return {
+      id: uid('subject'),
+      name,
+      target: `Mục tiêu điểm cao môn ${name}`,
+      color: meta.color,
+      icon: meta.icon,
+      topics: [{
+        id: uid('topic'),
+        name: meta.defaultTopic,
+        mastery: 50,
+        quiz: {}
+      }]
+    };
+  });
+  currentUser.onboarded = true;
+  persist();
+  renderApp();
+  closeModal('onboardingModal');
+  toast('Kế hoạch đầu tiên đã sẵn sàng. Hãy thêm nhiệm vụ để TB ưu tiên lịch.');
+}
 async function createProfile(event) {
   event.preventDefault();
   const email = $('#createEmail').value.trim().toLowerCase();
@@ -500,7 +598,20 @@ document.addEventListener('click', event => {
   if (event.target.closest('#applyPlan')) applySimulation(); if (event.target.closest('#dismissCoach')) { currentUser.settings.coach = false; persist(); renderSettings(); $('#coachCard').style.display = 'none'; toast('Đã ẩn Study Coach. Bạn có thể bật lại trong Settings.'); }
   if (event.target.closest('[data-close-modal]')) closeModal(event.target.closest('[data-close-modal]').dataset.closeModal);
   const filter = event.target.closest('[data-filter]'); if (filter) { taskFilter = filter.dataset.filter; renderTasks(); }
-  const subjectChoice = event.target.closest('[data-subject-choice]'); if (subjectChoice) { const name = subjectChoice.dataset.subjectChoice; onboardingChosenSubjects.has(name) ? onboardingChosenSubjects.delete(name) : onboardingChosenSubjects.add(name); subjectChoice.classList.toggle('chosen', onboardingChosenSubjects.has(name)); }
+  const comboChoice = event.target.closest('[data-combo]');
+  if (comboChoice) {
+    const combo = comboChoice.dataset.combo;
+    if (EXAM_COMBINATIONS[combo]) {
+      onboardingChosenSubjects = new Set(EXAM_COMBINATIONS[combo]);
+      syncOnboardingCombosUI();
+    }
+  }
+  const subjectChoice = event.target.closest('[data-subject-choice]');
+  if (subjectChoice) {
+    const name = subjectChoice.dataset.subjectChoice;
+    onboardingChosenSubjects.has(name) ? onboardingChosenSubjects.delete(name) : onboardingChosenSubjects.add(name);
+    syncOnboardingCombosUI();
+  }
   const dayChoice = event.target.closest('.day-picker button[data-day]'); if (dayChoice) { const collection = dayChoice.closest('#onboardingDays') ? onboardingChosenDays : null; if (collection) { const day = Number(dayChoice.dataset.day); collection.has(day) ? collection.delete(day) : collection.add(day); dayChoice.classList.toggle('chosen', collection.has(day)); } else if (dayChoice.closest('#availabilityDays')) dayChoice.classList.toggle('chosen'); }
   if (!event.target.closest('#notificationButton, #notificationPopover')) $('#notificationPopover')?.classList.remove('open');
 });
