@@ -298,6 +298,17 @@ function appearance(subject) {
   return { orb, category, card, icon: subject.icon || subject.name.slice(0, 1).toUpperCase(), badge: subject.name.length > 5 ? subject.name.slice(0, 3).toUpperCase() : subject.name.toUpperCase() };
 }
 function subjectAverage(subject) { return subject.topics.length ? Math.round(subject.topics.reduce((sum, topic) => sum + Number(topic.mastery || 0), 0) / subject.topics.length) : 0; }
+function getSubjectProgressCards(limit = 3) {
+  if (!currentUser?.subjects?.length) return [];
+  return [...currentUser.subjects]
+    .map(subject => ({
+      ...subject,
+      average: subjectAverage(subject),
+      topicsCount: subject.topics?.length || 0,
+    }))
+    .sort((a, b) => b.average - a.average)
+    .slice(0, limit);
+}
 function masteryStatus(mastery) { if (mastery >= 85) return ['Mastered', 'status-mastered']; if (mastery >= 70) return ['Good', 'status-good']; if (mastery >= 45) return ['Improving', 'status-improving']; return ['Weak', 'status-weak']; }
 function priorityLabel(score) {
   if (score >= 80) return ['Khẩn cấp', 'critical'];
@@ -476,7 +487,14 @@ function taskHTML(task) {
   return `<article class="task-row ${done ? 'done' : ''} ${meta.score >= 80 && !done ? 'task-highlight' : ''}" data-task-id="${task.id}"><button class="check-button ${done ? 'checked' : ''}" data-toggle-task="${task.id}" aria-label="Đổi trạng thái nhiệm vụ"></button><div class="task-category ${style.category}">${style.badge}</div><button class="task-main task-open" data-open-task="${task.id}"><h3>${escapeHTML(task.title)}</h3><p><span class="tiny-calendar">□</span>${done ? 'Đã hoàn thành' : deadlineText(task.deadline)} <i>•</i>${escapeHTML(reason)}</p></button><span class="priority-label ${done ? 'regular' : meta.cssClass}">${done ? 'Hoàn thành' : meta.label}</span><button class="task-arrow" data-open-task="${task.id}" aria-label="Chỉnh sửa nhiệm vụ">→</button></article>`;
 }
 function renderSubjectProgress() {
-  $('#subjectProgress').innerHTML = currentUser.subjects.length ? currentUser.subjects.slice(0, 3).map(subject => { const style = appearance(subject); const average = subjectAverage(subject); return `<article class="subject-progress-card ${style.card}"><div class="subject-card-top"><span class="subject-orb small ${style.orb}">${style.icon}</span><span class="trend ${average >= 70 ? 'up' : 'neutral'}">${average >= 70 ? '↑ Tiến bộ' : 'Cần ưu tiên'}</span></div><h3>${escapeHTML(subject.name)}</h3><p class="subject-card-target">${escapeHTML(subject.target || `${subject.topics.length} chủ đề đang theo dõi`)}</p><div class="progress-line"><span style="width:${average}%"></span></div><strong>${average}% <small>nắm vững</small></strong></article>`; }).join('') : emptyHTML('Thêm môn học đầu tiên để bắt đầu theo dõi tiến độ.');
+  const cards = getSubjectProgressCards(3);
+  $('#subjectProgress').innerHTML = cards.length ? cards.map(subject => {
+    const style = appearance(subject);
+    const average = Math.max(0, Math.min(100, Number(subject.average) || 0));
+    const statusText = average >= 70 ? '↑ Tiến bộ' : average >= 45 ? 'Đang cải thiện' : 'Cần ưu tiên';
+    const target = subject.target || `${subject.topicsCount || 0} chủ đề đang theo dõi`;
+    return `<article class="subject-progress-card ${style.card}"><div class="subject-card-top"><span class="subject-orb small ${style.orb}">${style.icon}</span><span class="trend ${average >= 70 ? 'up' : 'neutral'}">${statusText}</span></div><h3>${escapeHTML(subject.name)}</h3><p class="subject-card-target">${escapeHTML(target)}</p><div class="progress-line"><span style="width:${average}%"></span></div><strong>${average}% <small>nắm vững</small></strong></article>`;
+  }).join('') : emptyHTML('Thêm môn học đầu tiên để bắt đầu theo dõi tiến độ.');
 }
 function timelineTask(task) { const subject = getSubject(task.subjectId); return `<div class="time-entry current"><time>${task.start || '—'}</time><div class="timeline-line"><span></span></div><div class="schedule-event"><p>TB đề xuất · ${escapeHTML(subject?.name || 'Tự học')}</p><h3>${escapeHTML(task.title)}</h3><small>${task.minutes} phút</small></div></div>`; }
 function timelineSession(session, complete) { const topic = getTopic(session.topicId); return `<div class="time-entry ${complete ? 'done' : ''}"><time>Đã xong</time><div class="timeline-line"><span></span></div><div class="schedule-event"><p>${complete ? 'Đã hoàn thành' : 'Đã ghi nhận'} · ${escapeHTML(topic?.subject.name || 'Tự học')}</p><h3>${escapeHTML(topic?.name || 'Phiên học')}</h3><small>${session.minutes} phút</small></div></div>`; }
