@@ -110,6 +110,7 @@ let timerTotal = 0;
 let timerRunning = false;
 let timerInterval = null;
 let pendingScheduleConflict = null;
+let pendingTimerCompletion = null;
 
 const uid = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -531,7 +532,7 @@ function renderProgress() {
   const weekdayMinutes = [1, 2, 3, 4, 5, 6, 0].map(day => { const now = new Date(); const currentDay = now.getDay(); const diff = day - currentDay; const target = new Date(now); target.setDate(now.getDate() + diff + (diff > 0 ? -7 : 0)); const date = target.getFullYear() + '-' + String(target.getMonth()+1).padStart(2,'0') + '-' + String(target.getDate()).padStart(2,'0'); return completed.filter(session => session.date === date).reduce((sum, session) => sum + session.minutes, 0); }); const max = Math.max(...weekdayMinutes, 60);
   $('#barChart').innerHTML = weekdayMinutes.map((value, index) => `<i style="height:${Math.max(8, Math.round((value / max) * 100))}%" title="${value} phút"></i>`).join('');
   const review = currentUser.reviewSchedules.filter(item => item.status === 'scheduled').sort((a, b) => a.due.localeCompare(b.due))[0]; const topic = review ? getTopic(review.topicId) : null;
-  if (topic) { $('#reviewTopic').textContent = topic.name; $('#retentionValues').innerHTML = `<span>Trước học<b>${topic.quiz?.before ?? '—'}/10</b></span><i></i><span>Sau học<b>${topic.quiz?.after ?? '—'}/10</b></span><i></i><span>Sau ${review.interval} ngày<b>${topic.quiz?.retention ?? '—'}/10</b></span>`; $('#reviewNote').innerHTML = dateFrom(review.due) <= dateFrom(TODAY) ? `Đến lịch ôn lại hôm nay. TB đặt lần ôn này sau <strong>${review.interval} ngày</strong> vì đó là khoảng cách đã lưu từ phiên trước.` : `Lần ôn kế tiếp: <strong>${formatShortDate(review.due)}</strong>. Khoảng cách hiện tại là ${review.interval} ngày.`; } else { $('#reviewTopic').textContent = 'Chưa có lịch ôn'; $('#retentionValues').innerHTML = '<span>Hãy hoàn thành một phiên học để TB tạo lịch ôn.</span>'; $('#reviewNote').textContent = 'Spaced repetition sẽ thay đổi khoảng cách theo mức độ hiểu bạn ghi nhận.'; }
+  if (topic) { $('#reviewTopic').textContent = topic.name; $('#retentionValues').innerHTML = `<span>Trước học<b>${topic.quiz?.before ?? '—'}/10</b></span><i></i><span>Sau học<b>${topic.quiz?.after ?? '—'}/10</b></span><i></i><span>Sau ${review.interval} ngày<b>${topic.quiz?.retention ?? '—'}/10</b></span>`; $('#reviewNote').innerHTML = dateFrom(review.due) <= dateFrom(TODAY) ? `Đến lịch ôn lại hôm nay. TB đặt lần ôn này sau <strong>${review.interval} ngày</strong> vì đó là khoảng cách đã lưu từ phiên trước.` : `Lần ôn kế tiếp: <strong>${formatShortDate(review.due)}</strong>. Khoảng cách hiện tại là ${review.interval} ngày.`; $('#reviewNote').insertAdjacentHTML('beforeend', ` <button class="soft-button" data-complete-review="${review.id}">Đánh dấu đã ôn xong</button>`); } else { $('#reviewTopic').textContent = 'Chưa có lịch ôn'; $('#retentionValues').innerHTML = '<span>Hãy hoàn thành một phiên học để TB tạo lịch ôn.</span>'; $('#reviewNote').textContent = 'Spaced repetition sẽ thay đổi khoảng cách theo mức độ hiểu bạn ghi nhận.'; }
   $('#sessionLog').innerHTML = currentUser.sessions.length ? [...currentUser.sessions].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6).map(session => { const topic = getTopic(session.topicId); return `<article class="session-log-row"><time>${formatShortDate(session.date)}</time><div><h3>${escapeHTML(topic?.name || 'Chủ đề đã xoá')}</h3><p>${escapeHTML(topic?.subject.name || 'Không rõ môn')} · ${session.status === 'complete' ? `Hiểu ${session.understanding || 0}/5` : 'Đã bỏ lỡ'}</p></div><strong>${session.status === 'complete' ? `${session.minutes}p` : 'Bỏ lỡ'}</strong></article>`; }).join('') : emptyHTML('Chưa có lịch sử. Hãy ghi nhanh một phiên học.');
 }
 function renderTasks() {
@@ -753,13 +754,9 @@ function saveTakeNote(event) {
   currentUser.studyNotes.unshift(newNote);
 
   if (topic) {
-    currentUser.reviewSchedules.push({
-      id: uid('review'),
-      topicId: topic.id,
-      due: nextReviewDate,
-      interval,
-      status: 'scheduled',
-      noteId: newNote.id
+    scheduleReviewForTopic(topic.id, understanding, {
+      days: interval,
+      extra: { noteId: newNote.id }
     });
 
     currentUser.tasks.unshift({
@@ -1450,7 +1447,7 @@ function renderApp() {
 
 function showPage(page) { activePage = page; $$('.page').forEach(item => item.classList.toggle('active-page', item.id === page)); $$('.nav-link').forEach(item => item.classList.toggle('active', item.dataset.page === page)); renderHeader(); if (window.innerWidth <= 600) $('.sidebar').classList.remove('mobile-open'); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 function openModal(id) { const modal = $(`#${id}`); if (!modal) return; modal.classList.add('open'); modal.setAttribute('aria-hidden', 'false'); document.body.style.overflow = 'hidden'; }
-function closeModal(id) { const modal = $(`#${id}`); if (!modal) return; modal.classList.remove('open'); modal.setAttribute('aria-hidden', 'true'); if (!$$('.modal-backdrop.open').length) document.body.style.overflow = ''; }
+function closeModal(id) { const modal = $(`#${id}`); if (!modal) return; modal.classList.remove('open'); modal.setAttribute('aria-hidden', 'true'); if (id === 'quickLogModal' && pendingTimerCompletion) { pendingTimerCompletion = null; $('#logTopic').disabled = false; $('#logMinutes').disabled = false; $('#quickLogTitle').textContent = 'Bạn vừa học thế nào?'; } if (!$$('.modal-backdrop.open').length) document.body.style.overflow = ''; }
 function toast(message) { const element = $('#toast'); element.textContent = message; element.classList.add('show'); clearTimeout(element.timer); element.timer = setTimeout(() => element.classList.remove('show'), 3000); }
 
 function openStudy(taskId) { const task = getTask(taskId) || openTasks()[0]; if (!task) { toast('Hãy thêm một nhiệm vụ trước khi bắt đầu phiên học.'); showPage('tasks'); return; } selectedTimerTask = task; timerTotal = Number(task.minutes) * 60; timerSeconds = timerTotal; const subject = getSubject(task.subjectId); const style = appearance(subject); $('#timerOrb').className = `subject-orb ${style.orb} large`; $('#timerOrb').innerHTML = style.icon; $('#timerMeta').textContent = `${subject?.name || 'Tự học'} · ${task.minutes} PHÚT`; $('#studyTitle').textContent = task.title; $('#timerNote').textContent = 'Khi hoàn thành, TB sẽ lưu phiên học và tạo mốc ôn lại dựa trên mức độ hiểu của bạn.'; updateTimer(); $('#pauseTimer').textContent = 'Tạm dừng'; openModal('studyModal'); if (!timerRunning) toggleTimer(); }
@@ -1467,7 +1464,30 @@ function saveSession({ topicId, minutes, understanding, taskId = null }) {
   persist();
   renderApp();
 }
-function completeTimer() { if (!selectedTimerTask) return; if (timerRunning) toggleTimer(); saveSession({ topicId: selectedTimerTask.topicId, minutes: selectedTimerTask.minutes, understanding: 4, taskId: selectedTimerTask.id }); closeModal('studyModal'); toast('Đã lưu phiên học và tạo mốc ôn lại mới.'); }
+function completeTimer() {
+  if (!selectedTimerTask) return;
+  if (timerRunning) toggleTimer();
+  pendingTimerCompletion = { taskId: selectedTimerTask.id, topicId: selectedTimerTask.topicId, minutes: selectedTimerTask.minutes };
+  closeModal('studyModal');
+  openQuickLog();
+  $('#logTopic').value = selectedTimerTask.topicId;
+  $('#logMinutes').value = String(selectedTimerTask.minutes);
+  $('#logTopic').disabled = true;
+  $('#logMinutes').disabled = true;
+  $('#quickLogTitle').textContent = 'Bạn hiểu bài mức nào?';
+  $('#quickLogForm button[type="submit"]').textContent = 'Lưu phiên học';
+}
+
+function completeReview(reviewId) {
+  const review = (currentUser.reviewSchedules || []).find(item => item.id === reviewId);
+  if (!review) return;
+  review.status = 'done';
+  const note = (currentUser.studyNotes || []).find(item => item.id === review.noteId);
+  if (note) note.reviewed = true;
+  persist();
+  renderApp();
+  toast('Đã đánh dấu hoàn thành lần ôn.');
+}
 function toggleTask(taskId) { const task = getTask(taskId); if (!task) return; task.status = task.status === 'done' ? 'open' : 'done'; persist(); renderApp(); toast(task.status === 'done' ? 'Đã cập nhật nhiệm vụ hoàn thành.' : 'Nhiệm vụ đã được mở lại.'); }
 
 function populateTaskFields(subjectId, topicId) { const select = $('#taskSubject'); select.innerHTML = currentUser.subjects.map(subject => `<option value="${subject.id}">${escapeHTML(subject.name)}</option>`).join(''); if (subjectId) select.value = subjectId; const subject = getSubject(select.value); $('#taskTopic').innerHTML = subject?.topics.length ? subject.topics.map(topic => `<option value="${topic.id}">${escapeHTML(topic.name)}</option>`).join('') : '<option value="">Chưa có chủ đề</option>'; if (topicId) $('#taskTopic').value = topicId; }
@@ -1561,7 +1581,22 @@ function saveAvailability(event) { event.preventDefault(); const days = $$('#ava
 function openProfile() { $('#profileName').value = currentUser.profile.name; $('#profileGrade').value = currentUser.profile.grade; $('#profileGoal').value = currentUser.profile.goal; $('#profileTimezone').value = currentUser.profile.timezone; openModal('profileModal'); }
 function saveProfile(event) { event.preventDefault(); Object.assign(currentUser.profile, { name: $('#profileName').value.trim(), grade: $('#profileGrade').value.trim(), goal: $('#profileGoal').value.trim(), timezone: $('#profileTimezone').value }); persist(); renderApp(); closeModal('profileModal'); toast('Đã lưu hồ sơ học tập.'); }
 function openQuickLog() { const topics = currentUser.subjects.flatMap(subject => subject.topics.map(topic => ({ ...topic, subject }))); if (!topics.length) { toast('Hãy thêm chủ đề trước khi ghi phiên học.'); showPage('subjects'); return; } $('#logTopic').innerHTML = topics.map(topic => `<option value="${topic.id}">${escapeHTML(topic.subject.name)} · ${escapeHTML(topic.name)}</option>`).join(''); openModal('quickLogModal'); }
-function saveQuickLog(event) { event.preventDefault(); saveSession({ topicId: $('#logTopic').value, minutes: $('#logMinutes').value, understanding: $('#logUnderstanding').value }); closeModal('quickLogModal'); toast('Đã lưu phiên học và cập nhật lịch ôn.'); }
+function saveQuickLog(event) {
+  event.preventDefault();
+  const timerCompletion = pendingTimerCompletion;
+  saveSession({
+    topicId: timerCompletion?.topicId || $('#logTopic').value,
+    minutes: timerCompletion?.minutes || $('#logMinutes').value,
+    understanding: $('#logUnderstanding').value,
+    taskId: timerCompletion?.taskId || null
+  });
+  pendingTimerCompletion = null;
+  $('#logTopic').disabled = false;
+  $('#logMinutes').disabled = false;
+  $('#quickLogTitle').textContent = 'Bạn vừa học thế nào?';
+  closeModal('quickLogModal');
+  toast('Đã lưu phiên học và cập nhật lịch ôn.');
+}
 
 function calculateRisk(extraTests = 0) { const workload = openTasks().reduce((sum, task) => sum + task.minutes, 0) + extraTests * 90; const days = Math.max(1, currentUser.availability.days.length); const weeklyCapacity = (minFromTime(currentUser.availability.end) - minFromTime(currentUser.availability.start)) * days; const missed = currentUser.sessions.filter(session => session.status === 'missed').length; return Math.max(5, Math.min(88, Math.round(6 + (workload / Math.max(1, weeklyCapacity)) * 66 + Math.min(12, missed * 3)))); }
 function runSimulation() { const text = $('#whatIfInput').value.trim(); if (!text) { toast('Hãy mô tả một thay đổi để TB mô phỏng.'); return; } const number = Number((text.match(/\d+/) || ['1'])[0]); const currentRisk = calculateRisk(number); const newRisk = Math.max(5, Math.round(currentRisk * .42)); const first = openTasks()[0]; const plan = first ? `Đưa “${first.title}” vào phiên sớm nhất, sau đó tách ${number > 1 ? `${number} phiên` : '1 phiên'} ôn ngắn 45 phút trong khung giờ rảnh.` : 'Tạo các phiên ôn ngắn trong khung giờ rảnh bạn đã chọn.'; $('#simulationResult').hidden = false; $('#simulationResult').innerHTML = `<div class="risk-comparison"><div><p>Lịch hiện tại</p><strong>${currentRisk}<small>%</small></strong><span>nguy cơ trễ</span></div><div class="risk-arrow">→</div><div class="improved"><p>Phương án mới</p><strong>${newRisk}<small>%</small></strong><span>nguy cơ trễ</span></div></div><p class="plan-summary"><b>Đề xuất:</b> ${escapeHTML(plan)} Lịch cố định vẫn được giữ nguyên.</p><button class="apply-plan" id="applyPlan">Áp dụng phương án mới</button>`; $('#runSimulation').disabled = true; $('#runSimulation').innerHTML = 'Đã tạo phương án <span>✓</span>'; }
@@ -1864,6 +1899,7 @@ document.addEventListener('click', event => {
   const topicAdd = event.target.closest('[data-add-topic]'); if (topicAdd) openTopicModal(topicAdd.dataset.addTopic);
   const fixedDelete = event.target.closest('[data-delete-fixed]'); if (fixedDelete) deleteFixed(fixedDelete.dataset.deleteFixed);
   const restoreSchedule = event.target.closest('[data-restore-schedule]'); if (restoreSchedule) restoreOriginalSchedule(restoreSchedule.dataset.restoreSchedule);
+  const completeReviewButton = event.target.closest('[data-complete-review]'); if (completeReviewButton) completeReview(completeReviewButton.dataset.completeReview);
   const settingsAction = event.target.closest('[data-settings-action]'); if (settingsAction) { if (settingsAction.dataset.settingsAction === 'profile') openProfile(); if (settingsAction.dataset.settingsAction === 'availability') openAvailability(); if (settingsAction.dataset.settingsAction === 'subjects') showPage('subjects'); }
   if (event.target.closest('#applyPlan')) applySimulation(); if (event.target.closest('#dismissCoach')) { currentUser.settings.coach = false; persist(); renderSettings(); $('#coachCard').style.display = 'none'; toast('Đã ẩn Study Coach. Bạn có thể bật lại trong Settings.'); }
   if (event.target.closest('[data-close-modal]')) closeModal(event.target.closest('[data-close-modal]').dataset.closeModal);
