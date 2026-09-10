@@ -22,6 +22,6 @@ module.exports = async function handler(req, res) {
     return send(res, 405, { error: 'Method not allowed.' });
   } catch (error) {
     console.error('user route failed', error);
-    return send(res, error.statusCode || 500, { error: error.statusCode === 400 ? 'Dữ liệu không hợp lệ.' : 'Máy chủ dữ liệu người dùng đang gặp lỗi.' });
+    return send(res, error.code === 'INVALID_JSON' ? 400 : 500, { error: error.code === 'INVALID_JSON' ? 'Dữ liệu không hợp lệ.' : 'Máy chủ dữ liệu người dùng đang gặp lỗi.' });
   }
 };
