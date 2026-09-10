@@ -8,7 +8,7 @@ Configure these variables in Vercel and in local `.env`/`vercel dev`:
 
 - `DATABASE_URL`: PostgreSQL connection string.
 - `JWT_SECRET`: long random secret used to sign authentication tokens.
-- `GEMINI_API_KEY`: Google Gemini API key used by `/api/parse-timetable` for timetable image extraction.
+- `GEMINI_API_KEY`: Google Gemini API key used by `/api/parse-timetable`, `/api/simulate`, and `/api/generate-schedule`.
 - `GEMINI_MODEL` (optional): Gemini model name; defaults to `gemini-2.5-flash`.
 
 The authenticated `/api/chat` endpoint uses the same Gemini key/model for Study Coach function calling.

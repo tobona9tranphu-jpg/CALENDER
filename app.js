@@ -104,6 +104,7 @@ const SUBJECT_METADATA = {
 
 let currentUser = null;
 let coachHistory = [];
+let aiScheduleRequestKey = null;
 let activePage = 'home';
 let taskFilter = 'open';
 let onboardingStep = 1;
@@ -410,7 +411,51 @@ function createPlan(forDate = null) {
     }
     if (cursor + duration <= end) { plan.push({ ...task, start: timeFromMin(cursor), end: timeFromMin(cursor + duration) }); cursor += duration + 10; }
   }
+  const cachedDay = currentUser.scheduleCache?.plan?.days?.find(day => day.date === viewDate);
+  if (cachedDay) {
+    return {
+      fixed,
+      plan: cachedDay.sessions.map(session => ({ ...session, start: session.start.match(/(?:T|\s)(\d{2}:\d{2})/)?.[1] || session.start, end: session.end.match(/(?:T|\s)(\d{2}:\d{2})/)?.[1] || session.end })),
+      capacity: Math.max(0, end - minFromTime(availability.start) - fixed.reduce((sum, event) => sum + (minFromTime(event.end) - minFromTime(event.start)), 0)),
+    };
+  }
   return { fixed, plan, capacity: Math.max(0, end - minFromTime(availability.start) - fixed.reduce((sum, event) => sum + (minFromTime(event.end) - minFromTime(event.start)), 0)) };
+}
+
+function scheduleInput(rangeStart = TODAY, rangeDays = 7) {
+  return {
+    openTasks: openTasks(),
+    fixedSchedules: currentUser.fixedSchedules,
+    availability: currentUser.availability,
+    examMilestones: currentUser.examMilestones || [],
+    rangeStart,
+    rangeDays,
+  };
+}
+function scheduleCacheKey(input) { return JSON.stringify(input); }
+async function refreshAISchedule() {
+  const input = scheduleInput(TODAY, 7);
+  const key = scheduleCacheKey(input);
+  if (currentUser.scheduleCache?.key === key || aiScheduleRequestKey === key) return;
+  aiScheduleRequestKey = key;
+  try {
+    const result = await api('POST', '/generate-schedule', input);
+    currentUser.scheduleCache = { key, plan: result };
+    renderApp();
+  } catch {
+    toast('Đây là lịch tạm, AI đang xử lý lại.');
+  } finally {
+    if (aiScheduleRequestKey === key) aiScheduleRequestKey = null;
+  }
+}
+function renderUnscheduled(plan) {
+  const container = $('#unscheduledTasks');
+  if (!container) return;
+  const items = plan?.unscheduled || [];
+  container.hidden = !items.length;
+  container.innerHTML = items.length
+    ? `<strong>${items.length} nhiệm vụ chưa xếp được lịch, xem lý do</strong><br>${items.map(item => `${escapeHTML(item.title || item.taskId)}: ${escapeHTML(item.reason)}`).join('<br>')}`
+    : '';
 }
 
 function derivedInsights() {
@@ -512,6 +557,7 @@ function renderSchedule() {
   $('#scheduleCapacity').textContent = `Còn ${formatMinutes(Math.max(0, capacity - plan.reduce((sum, task) => sum + task.minutes, 0)))} linh hoạt`;
   const applied = currentUser.lastSimulation ? `<div class="active-plan-banner"><span>✓</span><span><b>Phương án mới đang áp dụng.</b> ${escapeHTML(currentUser.lastSimulation.summary)}</span></div>` : '';
   $('#scheduleTimeline').innerHTML = applied + (all.length ? all.map(event => `<article class="day-schedule-event ${event.flexible ? 'flexible' : 'fixed'}"><time>${event.start} – ${event.end || event.endTime || timeFromMin(minFromTime(event.start) + Number(event.minutes || 0))}</time><span class="event-rail"></span><div><h3>${escapeHTML(event.title)}</h3><p>${event.flexible ? `Tự học · ${escapeHTML(getSubject(event.subjectId)?.name || '')} · ${event.minutes} phút` : `${event.type === 'school' ? 'Trường học' : event.type === 'tutoring' ? 'Học thêm' : 'Hoạt động cá nhân'} · được bảo toàn`}</p></div><span class="event-tag">${event.flexible ? 'Linh hoạt' : 'Cố định'}</span></article>`).join('') : emptyHTML('Chưa có lịch cố định hay nhiệm vụ mở.'));
+  renderUnscheduled(currentUser.scheduleCache?.plan);
   const highest = plan[0]; const topic = highest ? getTopic(highest.topicId) : null;
   $('#scheduleReasonTitle').textContent = highest ? `${highest.title} được ưu tiên trước.` : 'Hãy thêm dữ liệu để TB sắp lịch.';
   $('#scheduleReason').textContent = highest ? `${highest.deadline === TODAY ? 'Hạn chót là hôm nay. ' : ''}${topic ? `${topic.name} đang ở mức ${topic.mastery}% nắm vững. ` : ''}Phiên này vừa khít trong khung giờ rảnh và không chạm vào lịch cố định.` : 'TB cần ít nhất một nhiệm vụ, môn học và khung giờ rảnh để tạo một lịch có lý do.';
@@ -1461,6 +1507,7 @@ function renderApp() {
   renderTakeNotes();
   renderSubjectProgress();
   renderSchedule();
+  refreshAISchedule();
   renderSubjects();
   renderProgress();
   renderTasks();
@@ -1624,7 +1671,7 @@ function saveQuickLog(event) {
 function calculateRisk(extraTests = 0) { const workload = openTasks().reduce((sum, task) => sum + task.minutes, 0) + extraTests * 90; const days = Math.max(1, currentUser.availability.days.length); const weeklyCapacity = (minFromTime(currentUser.availability.end) - minFromTime(currentUser.availability.start)) * days; const missed = currentUser.sessions.filter(session => session.status === 'missed').length; return Math.max(5, Math.min(88, Math.round(6 + (workload / Math.max(1, weeklyCapacity)) * 66 + Math.min(12, missed * 3)))); }
 let lastSimulationResult = null;
 function renderSimulationResult(result, note = '') { lastSimulationResult = result; $('#simulationResult').hidden = false; $('#simulationResult').innerHTML = `<div class="risk-comparison"><div><p>Lịch hiện tại</p><strong>${result.riskBefore}<small>%</small></strong><span>nguy cơ trễ</span></div><div class="risk-arrow">→</div><div class="improved"><p>Phương án mới</p><strong>${result.riskAfter}<small>%</small></strong><span>nguy cơ trễ</span></div></div><p class="plan-summary"><b>Đề xuất:</b> ${escapeHTML(result.planSummary)} ${escapeHTML(note)}</p><button class="apply-plan" id="applyPlan">Áp dụng phương án mới</button>`; }
-async function runSimulation() { const text = $('#whatIfInput').value.trim(); if (!text) { toast('Hãy mô tả một thay đổi để TB mô phỏng.'); return; } const button = $('#runSimulation'); button.disabled = true; button.textContent = 'Đang phân tích...'; const fallbackRisk = calculateRisk(Number((text.match(/\d+/) || ['1'])[0])); try { const result = await api('POST', '/simulate', { situation: text, fixedSchedules: currentUser.fixedSchedules, openTasks: openTasks(), availability: currentUser.availability }); renderSimulationResult(result); button.innerHTML = 'Đã tạo phương án <span>✓</span>'; } catch (error) { renderSimulationResult({ riskBefore: fallbackRisk, riskAfter: fallbackRisk, planSummary: 'Không thể tạo phương án AI lúc này.' }, 'Đây chỉ là ước tính tạm bằng công thức cũ, không phải kết quả AI thật.'); button.innerHTML = 'Ước tính tạm thời <span>!</span>'; } }
+async function runSimulation() { const text = $('#whatIfInput').value.trim(); if (!text) { toast('Hãy mô tả một thay đổi để TB mô phỏng.'); return; } const button = $('#runSimulation'); button.disabled = true; button.textContent = 'Đang phân tích...'; const fallbackRisk = calculateRisk(Number((text.match(/\d+/) || ['1'])[0])); try { const plan = ScheduleUtils.generateWeeklyPlan(scheduleInput(TODAY, 7)); const unscheduledNote = plan.unscheduled.length ? ` Có ${plan.unscheduled.length} nhiệm vụ chưa xếp được lịch.` : ''; renderSimulationResult({ riskBefore: fallbackRisk, riskAfter: Math.max(5, fallbackRisk - (plan.days.reduce((sum, day) => sum + day.sessions.length, 0) ? 8 : 0)), planSummary: `Dùng cùng bộ lập lịch với lịch chính để ưu tiên các nhiệm vụ trong khung giờ rảnh.${unscheduledNote}` }); button.innerHTML = 'Đã tạo phương án <span>✓</span>'; } catch (error) { renderSimulationResult({ riskBefore: fallbackRisk, riskAfter: fallbackRisk, planSummary: 'Không thể tạo phương án AI lúc này.' }, 'Đây chỉ là ước tính tạm bằng công thức cũ, không phải kết quả AI thật.'); button.innerHTML = 'Ước tính tạm thời <span>!</span>'; } }
 function applySimulation() { if (!lastSimulationResult) return; currentUser.lastSimulation = { summary: `${lastSimulationResult.planSummary} Nguy cơ trễ từ ${lastSimulationResult.riskBefore}% xuống ${lastSimulationResult.riskAfter}%.`, appliedAt: TODAY }; persist(); renderApp(); closeModal('whatIfModal'); showPage('schedule'); toast('Đã áp dụng phương án mới vào lịch linh hoạt.'); }
 
 function loginSuccess() {
