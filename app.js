@@ -63,7 +63,11 @@ async function api(method, path, body = null) {
     throw new Error('OFFLINE_MODE');
   }
 
-  if (!res.ok) throw new Error(data.error || 'Lỗi server');
+  if (!res.ok) {
+    const error = new Error(data.error || 'Lỗi server');
+    if (res.status >= 500) error.message = 'OFFLINE_MODE';
+    throw error;
+  }
   return data;
 }
 function getToday() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
