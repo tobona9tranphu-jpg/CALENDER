@@ -53,7 +53,9 @@ async function api(method, path, body = null) {
 
   const contentType = res.headers.get('content-type') || '';
   if (!contentType.includes('application/json')) {
-    throw new Error('OFFLINE_MODE');
+    const error = new Error(res.status >= 500 ? 'OFFLINE_MODE' : `HTTP_${res.status}`);
+    error.status = res.status;
+    throw error;
   }
 
   let data;
@@ -65,12 +67,13 @@ async function api(method, path, body = null) {
 
   if (!res.ok) {
     const error = new Error(data.error || 'Lỗi server');
+    error.status = res.status;
     if (res.status >= 500) error.message = 'OFFLINE_MODE';
     throw error;
   }
   return data;
 }
-function getToday() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+function getToday() { return ScheduleUtils.dateKey(new Date()); }
 let TODAY = getToday();
 let scheduleViewDate = TODAY;
 let calendarMonth = new Date().getMonth();
@@ -105,6 +108,7 @@ const SUBJECT_METADATA = {
 let currentUser = null;
 let coachHistory = [];
 let aiScheduleRequestKey = null;
+let aiScheduleRequestVersion = 0;
 let activePage = 'home';
 let taskFilter = 'open';
 let onboardingStep = 1;
@@ -163,7 +167,7 @@ function scheduleReviewForTopic(topicId, understanding, options = {}) {
   return { topic, due, interval: days };
 }
 
-function relDate(offset) { const d = new Date(); d.setDate(d.getDate() + offset); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+function relDate(offset) { return ScheduleUtils.dateKey(ScheduleUtils.addDays(new Date(), offset)); }
 
 function seedAccount() {
   return {
@@ -438,12 +442,16 @@ async function refreshAISchedule() {
   const key = scheduleCacheKey(input);
   if (currentUser.scheduleCache?.key === key || aiScheduleRequestKey === key) return;
   aiScheduleRequestKey = key;
+  const requestVersion = ++aiScheduleRequestVersion;
   try {
     const result = await api('POST', '/generate-schedule', input);
+    if (requestVersion !== aiScheduleRequestVersion || !currentUser || scheduleCacheKey(scheduleInput(TODAY, 7)) !== key) return;
     currentUser.scheduleCache = { key, plan: result };
     renderApp();
-  } catch {
-    toast('Đây là lịch tạm, AI đang xử lý lại.');
+  } catch (error) {
+    if (requestVersion === aiScheduleRequestVersion && error.message !== 'OFFLINE_MODE') {
+      toast('AI chưa thể cập nhật lịch; đang giữ lịch tạm hiện tại.');
+    }
   } finally {
     if (aiScheduleRequestKey === key) aiScheduleRequestKey = null;
   }
@@ -500,6 +508,12 @@ function renderHeader() {
   ['#avatarInitial', '#headerInitial', '#accountModalInitial'].forEach(selector => { const el = $(selector); if (el) el.textContent = initials(); });
   $('#accountModalName').textContent = currentUser.profile.name;
   $('#accountModalEmail').textContent = currentUser.email;
+  const syncStatus = $('#syncStatus');
+  if (syncStatus) {
+    const localMode = getToken()?.startsWith('local-');
+    syncStatus.textContent = localMode ? 'Chế độ demo · dữ liệu lưu trên trình duyệt này' : 'Đã kết nối đồng bộ';
+    syncStatus.className = `sync-status ${localMode ? 'local' : 'synced'}`;
+  }
 }
 function renderToday() {
   const tasks = openTasks(); const plan = createPlan(); const completedToday = currentUser.sessions.filter(session => session.date === TODAY && session.status === 'complete');

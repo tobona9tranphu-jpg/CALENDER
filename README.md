@@ -38,3 +38,15 @@ vercel dev
 ```
 
 The existing client continues to call `/api/login`, `/api/register`, `/api/user` GET, and `/api/user` PUT without UI changes.
+
+## Demo mode and product roadmap
+
+When the API/database is unavailable, the client can use the local demo account and stores data only in this browser. The header labels this mode explicitly; it is not server synchronization.
+
+See [AUDIT.md](./AUDIT.md) for the current architecture and risks, and [ROADMAP.md](./ROADMAP.md) for the staged P0-P3 product plan.
+
+Run the current automated checks with:
+
+```powershell
+npm.cmd test
+```
