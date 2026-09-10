@@ -8,6 +8,7 @@ Configure these variables in Vercel and in local `.env`/`vercel dev`:
 
 - `DATABASE_URL`: PostgreSQL connection string.
 - `JWT_SECRET`: long random secret used to sign authentication tokens.
+- `ANTHROPIC_API_KEY`: Anthropic API key used by `/api/parse-timetable` for timetable image extraction.
 
 For production, use a managed Postgres connection string with SSL enabled by the provider.
 

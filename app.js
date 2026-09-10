@@ -1291,31 +1291,28 @@ function setupClassPickerUI(classMap) {
 }
 
 async function parseImageTimetable(file) {
-  const sampleSubjects = currentUser.subjects.map(s => s.name);
-  const pool = sampleSubjects.length ? sampleSubjects : ['Toán', 'Ngữ văn', 'Tiếng Anh', 'Vật lí', 'Hóa học', 'Sinh học', 'Lịch sử', 'Địa lí'];
-
-  const slots = [
-    { day: 1, period: 1, title: 'Chào cờ', start: '07:15', end: '08:00' },
-    { day: 1, period: 2, title: pool[0] || 'Toán', start: '08:05', end: '09:50', periodLabel: 'Tiết 2-3' },
-    { day: 1, period: 4, title: pool[1] || 'Ngữ văn', start: '09:55', end: '11:30', periodLabel: 'Tiết 4-5' },
-    { day: 2, period: 1, title: pool[2] || 'Tiếng Anh', start: '07:15', end: '08:50', periodLabel: 'Tiết 1-2' },
-    { day: 2, period: 3, title: pool[3] || 'Vật lí', start: '09:05', end: '10:40', periodLabel: 'Tiết 3-4' },
-    { day: 2, period: 5, title: 'Tin học', start: '10:45', end: '11:30', periodLabel: 'Tiết 5' },
-    { day: 3, period: 1, title: pool[0] || 'Toán', start: '07:15', end: '08:50', periodLabel: 'Tiết 1-2' },
-    { day: 3, period: 3, title: pool[4] || 'Hóa học', start: '09:05', end: '10:40', periodLabel: 'Tiết 3-4' },
-    { day: 3, period: 5, title: 'GDCD', start: '10:45', end: '11:30', periodLabel: 'Tiết 5' },
-    { day: 4, period: 1, title: pool[1] || 'Ngữ văn', start: '07:15', end: '08:50', periodLabel: 'Tiết 1-2' },
-    { day: 4, period: 3, title: pool[2] || 'Tiếng Anh', start: '09:05', end: '10:40', periodLabel: 'Tiết 3-4' },
-    { day: 4, period: 5, title: 'Lịch sử', start: '10:45', end: '11:30', periodLabel: 'Tiết 5' },
-    { day: 5, period: 1, title: pool[3] || 'Vật lí', start: '07:15', end: '08:50', periodLabel: 'Tiết 1-2' },
-    { day: 5, period: 3, title: pool[4] || 'Hóa học', start: '09:05', end: '10:40', periodLabel: 'Tiết 3-4' },
-    { day: 5, period: 5, title: 'Thể dục / GDQP', start: '10:45', end: '11:30', periodLabel: 'Tiết 5' },
-    { day: 6, period: 1, title: pool[0] || 'Toán', start: '07:15', end: '08:50', periodLabel: 'Tiết 1-2' },
-    { day: 6, period: 3, title: 'Địa lí', start: '09:05', end: '09:50', periodLabel: 'Tiết 3' },
-    { day: 6, period: 4, title: 'Sinh hoạt lớp', start: '09:55', end: '11:30', periodLabel: 'Tiết 4-5' },
-  ].map(s => ({ ...s, id: uid('img-slot'), type: 'school' }));
-
-  return slots;
+  try {
+    if (!file || !file.type.startsWith('image/')) throw new Error('Vui lòng chọn tệp hình ảnh PNG, JPG hoặc WebP.');
+    const buffer = await file.arrayBuffer();
+    const image = new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < image.length; offset += chunkSize) {
+      binary += String.fromCharCode(...image.subarray(offset, offset + chunkSize));
+    }
+    const response = await fetch('/api/parse-timetable', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: btoa(binary), mimeType: file.type })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || 'Không đọc được ảnh này.');
+    if (!Array.isArray(result.slots)) throw new Error('AI không trả về thời khóa biểu hợp lệ.');
+    return result.slots.map(slot => ({ ...slot, id: uid('img-slot'), type: 'school' }));
+  } catch (error) {
+    if (error.message?.startsWith('Không đọc được') || error.message?.startsWith('Vui lòng')) throw error;
+    throw new Error('Không đọc được ảnh này, thử ảnh rõ nét hơn hoặc nhập tay.');
+  }
 }
 
 function parseTextTimetable(text) {
