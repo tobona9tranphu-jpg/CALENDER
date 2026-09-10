@@ -11,6 +11,8 @@ Configure these variables in Vercel and in local `.env`/`vercel dev`:
 - `GEMINI_API_KEY`: Google Gemini API key used by `/api/parse-timetable` for timetable image extraction.
 - `GEMINI_MODEL` (optional): Gemini model name; defaults to `gemini-2.5-flash`.
 
+The authenticated `/api/chat` endpoint uses the same Gemini key/model for Study Coach function calling.
+
 For production, use a managed Postgres connection string with SSL enabled by the provider.
 
 ## Database setup

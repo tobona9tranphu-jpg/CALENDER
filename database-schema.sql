@@ -134,6 +134,15 @@ CREATE TABLE IF NOT EXISTS schedule_changes (
   summary TEXT
 );
 
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id BIGSERIAL PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('user', 'model')),
+  content TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE INDEX IF NOT EXISTS tasks_user_status_idx ON tasks(user_id, status);
 CREATE INDEX IF NOT EXISTS sessions_user_date_idx ON study_sessions(user_id, study_date);
 CREATE INDEX IF NOT EXISTS reviews_user_due_idx ON review_schedules(user_id, due) WHERE status = 'scheduled';
+CREATE INDEX IF NOT EXISTS chat_messages_user_created_idx ON chat_messages(user_id, created_at);

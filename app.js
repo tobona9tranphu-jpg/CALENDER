@@ -99,6 +99,7 @@ const SUBJECT_METADATA = {
 };
 
 let currentUser = null;
+let coachHistory = [];
 let activePage = 'home';
 let taskFilter = 'open';
 let onboardingStep = 1;
@@ -544,7 +545,28 @@ function renderTasks() {
 }
 function renderInsights() {
   const insights = derivedInsights(); $('#insightsList').innerHTML = insights.map((insight, index) => `<article><span class="insight-number">0${index + 1}</span><div><p class="insight-source">${escapeHTML(insight.source)}</p><h3>${escapeHTML(insight.title)}</h3><p>${escapeHTML(insight.body)}</p></div><button class="soft-button insight-action" data-insight-page="${insight.page}">${escapeHTML(insight.action)}</button></article>`).join('');
-  const coach = insights[0]; $('#coachTitle').textContent = coach.title; $('#coachText').textContent = coach.body; $('#coachCard').style.display = currentUser.settings.coach ? '' : 'none';
+  const coach = insights[0]; $('#coachTitle').textContent = coach.title; $('#coachText').textContent = coach.body; $('#coachCard').style.display = currentUser.settings.coach ? '' : 'none'; renderCoachMessages();
+}
+function renderCoachMessages() {
+  const container = $('#coachMessages');
+  if (!container) return;
+  container.innerHTML = coachHistory.length
+    ? coachHistory.map(item => `<article class="task-row"><div><p>${item.role === 'user' ? 'Bạn' : 'Study Coach'}</p><h3>${escapeHTML(item.content)}</h3></div></article>`).join('')
+    : '<div class="empty-state">Hỏi về nhiệm vụ, tiến độ hoặc kỳ thi của bạn.</div>';
+}
+async function sendCoachMessage() {
+  const input = $('#coachInput'); const button = $('#coachSend'); const message = input.value.trim();
+  if (!message || button.disabled) return;
+  input.value = ''; button.disabled = true; button.textContent = 'Đang trả lời...';
+  coachHistory.push({ role: 'user', content: message }); renderCoachMessages();
+  try {
+    const data = await api('POST', '/chat', { message, history: coachHistory.slice(0, -1) });
+    coachHistory.push({ role: 'model', content: data.reply }); renderCoachMessages();
+  } catch (error) {
+    coachHistory.pop(); renderCoachMessages(); toast(error.message || 'Không thể gửi tin nhắn.');
+  } finally {
+    button.disabled = false; button.innerHTML = 'Gửi câu hỏi <span>→</span>';
+  }
 }
 function renderSettings() {
   const subjectCount = currentUser.subjects.length; const availability = `${currentUser.availability.start} – ${currentUser.availability.end} · ${currentUser.availability.days.length} ngày/tuần`;
@@ -1901,6 +1923,7 @@ document.addEventListener('click', event => {
   const completeReviewButton = event.target.closest('[data-complete-review]'); if (completeReviewButton) completeReview(completeReviewButton.dataset.completeReview);
   const settingsAction = event.target.closest('[data-settings-action]'); if (settingsAction) { if (settingsAction.dataset.settingsAction === 'profile') openProfile(); if (settingsAction.dataset.settingsAction === 'availability') openAvailability(); if (settingsAction.dataset.settingsAction === 'subjects') showPage('subjects'); }
   if (event.target.closest('#applyPlan')) applySimulation(); if (event.target.closest('#dismissCoach')) { currentUser.settings.coach = false; persist(); renderSettings(); $('#coachCard').style.display = 'none'; toast('Đã ẩn Study Coach. Bạn có thể bật lại trong Settings.'); }
+  if (event.target.closest('#coachSend')) sendCoachMessage();
   if (event.target.closest('[data-close-modal]')) closeModal(event.target.closest('[data-close-modal]').dataset.closeModal);
   const filter = event.target.closest('[data-filter]'); if (filter) { taskFilter = filter.dataset.filter; renderTasks(); }
   const comboChoice = event.target.closest('[data-combo]');
@@ -1956,6 +1979,13 @@ document.addEventListener('click', event => {
     const idx = parseInt(importSlotDel.dataset.deleteImportSlot, 10);
     parsedImportSlots.splice(idx, 1);
     renderImportPreview();
+  }
+});
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Enter' && event.target.id === 'coachInput' && !event.shiftKey) {
+    event.preventDefault();
+    sendCoachMessage();
   }
 });
 document.addEventListener('change', event => {
