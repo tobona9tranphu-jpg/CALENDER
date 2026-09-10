@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 
 const root = __dirname;
 const DATA_DIR = path.join(root, 'data');
@@ -15,7 +16,8 @@ if (!fs.existsSync(USERS_FILE)) fs.writeFileSync(USERS_FILE, '[]', 'utf8');
 const sessions = {};
 
 // --- Helpers ---
-function hashPassword(pw) { return crypto.createHash('sha256').update(pw).digest('hex'); }
+async function hashPassword(pw) { return bcrypt.hash(pw, 12); }
+function hashLegacyPassword(pw) { return crypto.createHash('sha256').update(pw).digest('hex'); }
 function genToken() { return crypto.randomBytes(32).toString('hex'); }
 function readUsers() { try { return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); } catch { return []; } }
 function writeUsers(users) { fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8'); }
@@ -41,7 +43,7 @@ function getUserFromToken(req) {
 }
 
 // --- Seed demo account if empty ---
-function ensureSeed() {
+async function ensureSeed() {
   const users = readUsers();
   if (users.length > 0) return;
   const now = new Date();
@@ -52,7 +54,7 @@ function ensureSeed() {
   const seed = {
     id: 'demo-minh-anh',
     email: 'minhanh@tb.demo',
-    passwordHash: hashPassword('demo123'),
+    passwordHash: await hashPassword('demo123'),
     onboarded: true,
     profile: { name: 'Minh Anh', grade: 'Lớp 12A1', goal: 'Tăng sự tự tin trước kỳ thi cuối kỳ', timezone: 'Asia/Ho_Chi_Minh' },
     availability: { start: '15:00', end: '21:30', days: [1, 2, 3, 4, 5, 6, 0] },
@@ -134,7 +136,7 @@ function ensureSeed() {
   writeUsers([seed]);
   console.log('Seed demo account created: minhanh@tb.demo / demo123');
 }
-ensureSeed();
+ensureSeed().then(() => {
 
 // --- MIME types for static files ---
 const mimeTypes = {
@@ -176,7 +178,7 @@ http.createServer(async (req, res) => {
       }
       const id = 'user-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex');
       const newUser = {
-        id, email: email.trim().toLowerCase(), passwordHash: hashPassword(password),
+        id, email: email.trim().toLowerCase(), passwordHash: await hashPassword(password),
         onboarded: false,
         profile: { name: name.trim(), grade: '', goal: '', timezone: 'Asia/Ho_Chi_Minh' },
         availability: { start: '15:00', end: '21:00', days: [1, 2, 3, 4, 5] },
@@ -204,8 +206,19 @@ http.createServer(async (req, res) => {
       const { email, password } = await parseBody(req);
       if (!email || !password) return json(res, 400, { error: 'Thiếu email hoặc mật khẩu.' });
       const users = readUsers();
-      const user = users.find(u => u.email.toLowerCase() === email.trim().toLowerCase() && u.passwordHash === hashPassword(password));
+      const user = users.find(u => u.email.toLowerCase() === email.trim().toLowerCase());
       if (!user) return json(res, 401, { error: 'Email hoặc mật khẩu chưa đúng.' });
+      const isBcryptHash = typeof user.passwordHash === 'string' && /^\$2[aby]?\$\d{2}\$/.test(user.passwordHash);
+      const passwordMatches = isBcryptHash
+        ? await bcrypt.compare(password, user.passwordHash)
+        : user.passwordHash === hashLegacyPassword(password);
+      if (!passwordMatches) return json(res, 401, { error: 'Email hoặc mật khẩu chưa đúng.' });
+      if (!isBcryptHash) {
+        user.passwordHash = await hashPassword(password);
+        const userIndex = users.findIndex(item => item.id === user.id);
+        users[userIndex] = user;
+        writeUsers(users);
+      }
       const token = genToken();
       sessions[token] = user.id;
       const { passwordHash, ...safe } = user;
@@ -255,4 +268,5 @@ http.createServer(async (req, res) => {
   });
 }).listen(4173, '127.0.0.1', () => {
   console.log('TB is ready at http://127.0.0.1:4173');
+});
 });
