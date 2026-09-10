@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "seed:demo": "node scripts/seed-demo-account.js"
+    "seed:demo": "node scripts/seed-demo-account.js",
+    "test": "node --test"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
