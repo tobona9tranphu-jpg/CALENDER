@@ -1,7 +1,6 @@
 const { send, readBody, preflight } = require('../lib/http');
 
-const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
-const MODEL = 'claude-sonnet-4-6';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 function validationError(message) {
@@ -53,31 +52,28 @@ function validateSlots(value) {
   return slots;
 }
 
-async function callClaude(image, mimeType) {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    const error = new Error('Máy chủ chưa cấu hình ANTHROPIC_API_KEY.');
+async function callGemini(image, mimeType) {
+  if (!process.env.GEMINI_API_KEY) {
+    const error = new Error('Máy chủ chưa cấu hình GEMINI_API_KEY.');
     error.statusCode = 500;
     throw error;
   }
-  const response = await fetch(ANTHROPIC_URL, {
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`;
+  const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-api-key': process.env.ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 4096,
-      temperature: 0,
-      system: 'Bạn là bộ trích xuất thời khóa biểu. Chỉ trả về JSON hợp lệ, không markdown, không giải thích.',
-      messages: [{
+      systemInstruction: { parts: [{ text: 'Bạn là bộ trích xuất thời khóa biểu. Chỉ trả về JSON hợp lệ, không markdown, không giải thích.' }] },
+      contents: [{
         role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: mimeType, data: image } },
-          { type: 'text', text: 'Đọc ảnh thời khóa biểu này. Trả về duy nhất một JSON array gồm các ca học nhìn thấy, theo đúng schema: [{"day":1,"title":"Toán","start":"07:15","end":"08:00"}]. day là thứ trong tuần từ 1 (Thứ 2) đến 7 (Chủ nhật). Bỏ qua ô trống, ngày nghỉ và thông tin không phải ca học. Giữ nguyên tên môn/hoạt động nhìn thấy trong ảnh. Nếu không đọc chắc được một ca, không tự đoán ca đó.' },
+        parts: [
+          { inlineData: { mimeType, data: image } },
+          { text: 'Đọc ảnh thời khóa biểu này. Trả về duy nhất một JSON array gồm các ca học nhìn thấy, theo đúng schema: [{"day":1,"title":"Toán","start":"07:15","end":"08:00"}]. day là thứ trong tuần từ 1 (Thứ 2) đến 7 (Chủ nhật). Bỏ qua ô trống, ngày nghỉ và thông tin không phải ca học. Giữ nguyên tên môn/hoạt động nhìn thấy trong ảnh. Nếu không đọc chắc được một ca, không tự đoán ca đó.' },
         ],
       }],
+      generationConfig: { temperature: 0, responseMimeType: 'application/json' },
     }),
   });
   const data = await response.json().catch(() => null);
@@ -86,7 +82,7 @@ async function callClaude(image, mimeType) {
     error.statusCode = response.status === 422 ? 422 : 502;
     throw error;
   }
-  const text = data?.content?.find(item => item.type === 'text')?.text;
+  const text = data?.candidates?.[0]?.content?.parts?.find(item => typeof item.text === 'string')?.text;
   return parseModelJSON(text);
 }
 
@@ -100,7 +96,7 @@ module.exports = async function handler(req, res) {
     if (!image || !/^image\/(png|jpeg|jpg|webp)$/.test(mimeType)) {
       return send(res, 422, { error: 'Ảnh không hợp lệ. Vui lòng chọn PNG, JPG hoặc WebP.' });
     }
-    const slots = validateSlots(await callClaude(image, mimeType === 'image/jpg' ? 'image/jpeg' : mimeType));
+    const slots = validateSlots(await callGemini(image, mimeType === 'image/jpg' ? 'image/jpeg' : mimeType));
     return send(res, 200, { slots });
   } catch (error) {
     const status = error.statusCode || 500;
