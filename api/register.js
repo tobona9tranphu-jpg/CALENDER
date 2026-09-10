@@ -32,6 +32,6 @@ module.exports = async function handler(req, res) {
     return send(res, 201, { token: signUser(user.id), user: safeUser(user) });
   } catch (error) {
     console.error('register failed', error);
-    return send(res, 400, { error: 'Dữ liệu không hợp lệ.' });
+    return send(res, error.statusCode || 500, { error: error.statusCode === 400 ? 'Dữ liệu không hợp lệ.' : 'Máy chủ đăng ký đang gặp lỗi.' });
   }
 };

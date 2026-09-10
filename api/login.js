@@ -23,6 +23,6 @@ module.exports = async function handler(req, res) {
     return send(res, 200, { token: signUser(user.id), user: safeUser(freshUser) });
   } catch (error) {
     console.error('login failed', error);
-    return send(res, 400, { error: 'Dữ liệu không hợp lệ.' });
+    return send(res, error.statusCode || 500, { error: error.statusCode === 400 ? 'Dữ liệu không hợp lệ.' : 'Máy chủ đăng nhập đang gặp lỗi.' });
   }
 };
