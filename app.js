@@ -882,8 +882,10 @@ function taskHTML(task) {
   return `<article class="task-row ${done ? 'done' : ''} ${meta.score >= 80 && !done ? 'task-highlight' : ''}" data-task-id="${taskIdEsc}"><button class="check-button ${done ? 'checked' : ''}" data-toggle-task="${taskIdEsc}" aria-label="Đổi trạng thái nhiệm vụ"></button><div class="task-category ${style.category}">${escapeHTML(style.badge)}</div><button class="task-main task-open" data-open-task="${taskIdEsc}"><h3>${escapeHTML(task.title)}</h3><p><span class="tiny-calendar">□</span>${done ? 'Đã hoàn thành' : deadlineText(task.deadline)} <i>•</i>${escapeHTML(reason)}</p></button><span class="priority-label ${done ? 'regular' : meta.cssClass}">${done ? 'Hoàn thành' : meta.label}</span><button class="task-arrow" data-open-task="${taskIdEsc}" aria-label="Chỉnh sửa nhiệm vụ">→</button></article>`;
 }
 function renderSubjectProgress() {
+  const container = $('#subjectProgress');
+  if (!container) return;
   const cards = getSubjectProgressCards(3);
-  $('#subjectProgress').innerHTML = cards.length ? cards.map(subject => {
+  container.innerHTML = cards.length ? cards.map(subject => {
     const style = appearance(subject);
     const average = Math.max(0, Math.min(100, Number(subject.average) || 0));
     const statusText = average >= 70 ? '↑ Tiến bộ' : average >= 45 ? 'Đang cải thiện' : 'Cần ưu tiên';
@@ -3197,30 +3199,30 @@ function toggleNotification() {
   }
 })();
 
-$('#loginForm').addEventListener('submit', event => { event.preventDefault(); signIn($('#loginEmail').value, $('#loginPassword').value); });
-$('#fillDemo').addEventListener('click', () => { $('#loginEmail').value = DEMO_EMAIL; $('#loginPassword').value = DEMO_PASSWORD; $('#loginError').hidden = true; });
-$('#createDemoProfile').addEventListener('click', () => openModal('loginProfileModal'));
-$('#createProfileForm').addEventListener('submit', createProfile);
-$('#onboardingNext').addEventListener('click', advanceOnboarding);
-$('#startStudy').addEventListener('click', () => openStudy($('#startStudy').dataset.taskId));
-$('#pauseTimer').addEventListener('click', toggleTimer);
-$('#completeSession').addEventListener('click', completeTimer);
-$('#taskForm').addEventListener('submit', saveTask); $('#deleteTaskButton').addEventListener('click', deleteTask); $('#taskSubject').addEventListener('change', () => populateTaskFields($('#taskSubject').value));
-$('#subjectForm').addEventListener('submit', saveSubject); $('#deleteSubjectButton').addEventListener('click', deleteSubject);
-$('#topicForm').addEventListener('submit', saveTopic); $('#deleteTopicButton').addEventListener('click', deleteTopic); $('#topicMastery').addEventListener('input', event => { $('#topicMasteryOutput').textContent = `${event.target.value}%`; });
-$('#fixedForm').addEventListener('submit', saveFixed); $('#availabilityForm').addEventListener('submit', saveAvailability); $('#profileForm').addEventListener('submit', saveProfile); $('#quickLogForm').addEventListener('submit', saveQuickLog); $('#runSimulation').addEventListener('click', runSimulation);
-['input', 'change'].forEach(eventName => $('#fixedForm').addEventListener(eventName, showConflictHint));
-$('#fixedDays').addEventListener('click', event => { const button = event.target.closest('button[data-day]'); if (!button) return; button.classList.toggle('chosen'); showConflictHint(); });
-$('#discardConflict').addEventListener('click', discardConflict); $('#editConflict').addEventListener('click', editConflict); $('#applyAlternative').addEventListener('click', applyAlternative);
-$('#alternativeList').addEventListener('change', () => { $$('.alternative-card', $('#alternativeList')).forEach(card => card.classList.toggle('selected', $('input', card).checked)); });
-$('#fixedScheduleButton').addEventListener('click', openFixedModal); $('#fixedScheduleButtonSecondary').addEventListener('click', openFixedModal); $('#availabilityButton').addEventListener('click', openAvailability); $('#addSubjectButton').addEventListener('click', () => openSubjectModal()); $('#addTaskButton').addEventListener('click', () => openTaskModal()); $('#logSessionButton').addEventListener('click', openQuickLog); $('#refreshInsights').addEventListener('click', () => { renderInsights(); toast('Đã cập nhật insight từ dữ liệu hiện có.'); }); $('#exportData').addEventListener('click', exportData); $('#resetDemo').addEventListener('click', resetDemo); $('#notificationButton').addEventListener('click', toggleNotification);
-$('#accountButton').addEventListener('click', () => openModal('accountModal')); $('#profileShortcut').addEventListener('click', () => openModal('accountModal')); $('#logoutButton').addEventListener('click', logout); $('#openProfileFromAccount').addEventListener('click', () => { closeModal('accountModal'); openProfile(); });
+$('#loginForm')?.addEventListener('submit', event => { event.preventDefault(); signIn($('#loginEmail')?.value, $('#loginPassword')?.value); });
+$('#fillDemo')?.addEventListener('click', () => { if ($('#loginEmail')) $('#loginEmail').value = DEMO_EMAIL; if ($('#loginPassword')) $('#loginPassword').value = DEMO_PASSWORD; if ($('#loginError')) $('#loginError').hidden = true; });
+$('#createDemoProfile')?.addEventListener('click', () => openModal('loginProfileModal'));
+$('#createProfileForm')?.addEventListener('submit', createProfile);
+$('#onboardingNext')?.addEventListener('click', advanceOnboarding);
+$('#startStudy')?.addEventListener('click', () => openStudy($('#startStudy')?.dataset?.taskId));
+$('#pauseTimer')?.addEventListener('click', toggleTimer);
+$('#completeSession')?.addEventListener('click', completeTimer);
+$('#taskForm')?.addEventListener('submit', saveTask); $('#deleteTaskButton')?.addEventListener('click', deleteTask); $('#taskSubject')?.addEventListener('change', () => populateTaskFields($('#taskSubject')?.value));
+$('#subjectForm')?.addEventListener('submit', saveSubject); $('#deleteSubjectButton')?.addEventListener('click', deleteSubject);
+$('#topicForm')?.addEventListener('submit', saveTopic); $('#deleteTopicButton')?.addEventListener('click', deleteTopic); $('#topicMastery')?.addEventListener('input', event => { if ($('#topicMasteryOutput')) $('#topicMasteryOutput').textContent = `${event.target.value}%`; });
+$('#fixedForm')?.addEventListener('submit', saveFixed); $('#availabilityForm')?.addEventListener('submit', saveAvailability); $('#profileForm')?.addEventListener('submit', saveProfile); $('#quickLogForm')?.addEventListener('submit', saveQuickLog); $('#runSimulation')?.addEventListener('click', runSimulation);
+['input', 'change'].forEach(eventName => $('#fixedForm')?.addEventListener(eventName, showConflictHint));
+$('#fixedDays')?.addEventListener('click', event => { const button = event.target.closest('button[data-day]'); if (!button) return; button.classList.toggle('chosen'); showConflictHint(); });
+$('#discardConflict')?.addEventListener('click', discardConflict); $('#editConflict')?.addEventListener('click', editConflict); $('#applyAlternative')?.addEventListener('click', applyAlternative);
+$('#alternativeList')?.addEventListener('change', () => { $$('.alternative-card', $('#alternativeList')).forEach(card => card.classList.toggle('selected', $('input', card).checked)); });
+$('#fixedScheduleButton')?.addEventListener('click', openFixedModal); $('#fixedScheduleButtonSecondary')?.addEventListener('click', openFixedModal); $('#availabilityButton')?.addEventListener('click', openAvailability); $('#addSubjectButton')?.addEventListener('click', () => openSubjectModal()); $('#addTaskButton')?.addEventListener('click', () => openTaskModal()); $('#logSessionButton')?.addEventListener('click', openQuickLog); $('#refreshInsights')?.addEventListener('click', () => { renderInsights(); toast('Đã cập nhật insight từ dữ liệu hiện có.'); }); $('#exportData')?.addEventListener('click', exportData); $('#resetDemo')?.addEventListener('click', resetDemo); $('#notificationButton')?.addEventListener('click', toggleNotification);
+$('#accountButton')?.addEventListener('click', () => openModal('accountModal')); $('#profileShortcut')?.addEventListener('click', () => openModal('accountModal')); $('#logoutButton')?.addEventListener('click', logout); $('#openProfileFromAccount')?.addEventListener('click', () => { closeModal('accountModal'); openProfile(); });
 
 /* New feature event listeners */
-$('#takeNoteForm').addEventListener('submit', saveTakeNote);
-$('#addMilestoneForm').addEventListener('submit', addMilestone);
-$('#timetableFileInput').addEventListener('change', e => { if (e.target.files?.[0]) handleTimetableFile(e.target.files[0]); });
-$('#notePhotoInput').addEventListener('change', e => { if (e.target.files?.[0]) processNotePhoto(e.target.files[0]); });
+$('#takeNoteForm')?.addEventListener('submit', saveTakeNote);
+$('#addMilestoneForm')?.addEventListener('submit', addMilestone);
+$('#timetableFileInput')?.addEventListener('change', e => { if (e.target.files?.[0]) handleTimetableFile(e.target.files[0]); });
+$('#notePhotoInput')?.addEventListener('change', e => { if (e.target.files?.[0]) processNotePhoto(e.target.files[0]); });
 
 // Prevent browser from opening/downloading dropped files when dropped outside dropzone
 window.addEventListener('dragover', e => { e.preventDefault(); }, false);
