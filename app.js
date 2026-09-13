@@ -1457,17 +1457,24 @@ function openTimetableModal() {
 
 async function handleTimetableFile(file) {
   if (!file) return;
+  const fileName = file.name || '';
+  const ext = fileName.split('.').pop().toLowerCase();
+
+  if (ext === 'doc' || fileName.toLowerCase().endsWith('.doc')) {
+    toast('Tệp .doc không được hỗ trợ trực tiếp. Vui lòng lưu sang .docx hoặc chụp ảnh TKB.');
+    return;
+  }
+
   $('#timetableDropzone').hidden = true;
   $('#importStatus').hidden = false;
   $('#importPreview').hidden = true;
   $('#classPickerBox').hidden = true;
-  $('#importStatusText').textContent = `Đang bóc tách thời khóa biểu từ "${file.name}"...`;
+  $('#importStatusText').textContent = `Đang bóc tách thời khóa biểu từ "${fileName}"...`;
 
   try {
-    const ext = file.name.split('.').pop().toLowerCase();
     let slots = [];
 
-    if (ext === 'docx' || ext === 'doc') {
+    if (ext === 'docx') {
       slots = await parseDocxTimetable(file);
     } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
       slots = await parseImageTimetable(file);
@@ -1491,6 +1498,10 @@ async function handleTimetableFile(file) {
 }
 
 function extractDocxTables(xmlText) {
+  if (typeof TimetableImporter !== 'undefined' && TimetableImporter.extractDocxLogicalGrid) {
+    const tableMatches = xmlText.match(/<w:tbl[\s\S]*?<\/w:tbl>/g) || [];
+    return tableMatches.map(tbl => TimetableImporter.extractDocxLogicalGrid(tbl));
+  }
   const tableMatches = xmlText.match(/<w:tbl[\s\S]*?<\/w:tbl>/g) || [];
   return tableMatches.map(tbl => {
     const rowMatches = tbl.match(/<w:tr[\s\S]*?<\/w:tr>/g) || [];
@@ -1513,7 +1524,7 @@ function extractDocxTables(xmlText) {
 
 async function parseDocxTimetable(file) {
   if (file.name.toLowerCase().endsWith('.doc')) {
-    throw new Error('Tệp Word định dạng cũ (.doc) không thể giải mã trực tiếp trong trình duyệt. Bạn vui lòng mở file và chọn Lưu dưới dạng (Save As) sang đuôi ".docx" hoặc chụp ảnh TKB để nhập nhé!');
+    throw new Error('Tệp .doc không được hỗ trợ trực tiếp. Vui lòng lưu sang .docx hoặc chụp ảnh TKB.');
   }
 
   if (typeof JSZip === 'undefined') {
@@ -1552,14 +1563,12 @@ async function parseDocxTimetable(file) {
     return parseTextTimetable(allTexts);
   }
 
-  // Check if document contains multi-class tables (e.g. Master Timetable for all classes)
-  const classMap = {}; // className -> { label, slots: [] }
+  const classMap = {};
   let hasMultiClassTable = false;
 
   for (const rows of tables) {
     if (!rows.length) continue;
 
-    // Scan the first 5 rows to detect class columns header
     let headerRowIdx = -1;
     let classCols = {};
 
@@ -1601,7 +1610,6 @@ async function parseDocxTimetable(file) {
           isAfternoon = false;
         }
 
-        // Day cell (col 0): Thứ 2..7, CN, Chủ nhật
         if (cells[0]) {
           const c0 = cells[0].toLowerCase();
           if (c0.includes('chủ nhật') || c0.includes('cn') || c0 === 't8' || c0 === '8') {
@@ -1615,7 +1623,6 @@ async function parseDocxTimetable(file) {
           }
         }
 
-        // Period cell (col 1): Tiết 1..5
         if (cells[1]) {
           const pm = cells[1].match(/\d+/);
           if (pm) {
@@ -1625,32 +1632,30 @@ async function parseDocxTimetable(file) {
           }
         }
 
-        // Explicit time in cells (e.g. 07:30 - 08:15)
         const timeMatch = cells.slice(0, 3).join(' ').match(/(\d{1,2})[:h](\d{2})\s*[-–—]\s*(\d{1,2})[:h](\d{2})/);
         const rowTime = timeMatch ? {
           start: `${String(timeMatch[1]).padStart(2, '0')}:${timeMatch[2]}`,
           end: `${String(timeMatch[3]).padStart(2, '0')}:${timeMatch[4]}`
         } : null;
 
-        // Collect each class cell
         for (const [colStr, colInfo] of Object.entries(classCols)) {
           const colIdx = parseInt(colStr, 10);
           if (colIdx < cells.length) {
             const rawVal = cells[colIdx];
             const parsed = parseSubjectAndTeacher(rawVal);
             if (parsed) {
-              const times = rowTime || PERIOD_TIMES[currentPeriod] || {
-                start: `${String(7 + Math.floor(currentPeriod / 2)).padStart(2, '0')}:00`,
-                end: `${String(7 + Math.floor(currentPeriod / 2)).padStart(2, '0')}:45`
-              };
+              const profileTime = typeof TimetableImporter !== 'undefined' ? TimetableImporter.getPeriodTime(currentPeriod) : PERIOD_TIMES[currentPeriod];
+              const times = rowTime || profileTime || { start: '', end: '' };
               classMap[colInfo.className].slots.push({
                 id: uid('imported'),
                 day: currentDay,
                 period: currentPeriod,
                 title: parsed.title,
                 subjectGroup: parsed.subjectGroup,
+                teacher: parsed.teacher || '',
                 start: times.start,
                 end: times.end,
+                unresolvedTime: !times.start || !times.end,
                 type: 'school'
               });
             }
@@ -1660,14 +1665,12 @@ async function parseDocxTimetable(file) {
     }
   }
 
-  // If multi-class master timetable was detected:
   if (hasMultiClassTable && Object.keys(classMap).length > 1) {
     detectedMultiClasses = classMap;
     setupClassPickerUI(classMap);
     return [];
   }
 
-  // Otherwise, fallback to single-table parser
   const rawSlots = [];
   for (const rows of tables) {
     if (!rows.length) continue;
@@ -1743,18 +1746,18 @@ async function parseDocxTimetable(file) {
           const rawCell = cells[colIdx];
           const parsed = parseSubjectAndTeacher(rawCell);
           if (parsed) {
-            const times = rowTime || PERIOD_TIMES[currentPeriod] || {
-              start: `${String(7 + Math.floor(currentPeriod / 2)).padStart(2, '0')}:00`,
-              end: `${String(7 + Math.floor(currentPeriod / 2)).padStart(2, '0')}:45`
-            };
+            const profileTime = typeof TimetableImporter !== 'undefined' ? TimetableImporter.getPeriodTime(currentPeriod) : PERIOD_TIMES[currentPeriod];
+            const times = rowTime || profileTime || { start: '', end: '' };
             rawSlots.push({
               id: uid('imported'),
               day: Number(dayNum),
               period: currentPeriod,
               title: parsed.title,
               subjectGroup: parsed.subjectGroup,
+              teacher: parsed.teacher || '',
               start: times.start,
               end: times.end,
+              unresolvedTime: !times.start || !times.end,
               type: 'school'
             });
           }
@@ -1771,7 +1774,6 @@ function setupClassPickerUI(classMap) {
   const select = $('#importClassSelect');
   const classKeys = Object.keys(classMap);
 
-  // Group classes by grade (Khối 12, Khối 11, Khối 10...)
   const groups = {};
   classKeys.forEach(cls => {
     const grade = cls.match(/^\d+/)?.[0] || 'Khác';
@@ -1779,7 +1781,6 @@ function setupClassPickerUI(classMap) {
     groups[grade].push(cls);
   });
 
-  // Sort groups descending (12, 11, 10)
   const sortedGradeKeys = Object.keys(groups).sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
 
   let optionsHTML = '';
@@ -1794,9 +1795,11 @@ function setupClassPickerUI(classMap) {
 
   select.innerHTML = optionsHTML;
 
-  // Auto-select based on user profile (e.g. currentUser.profile.grade = "Lớp 12A1")
-  const userGradeText = (currentUser.profile?.grade || '').toUpperCase();
-  const matchedClass = classKeys.find(cls => userGradeText.includes(cls));
+  const normFn = (typeof TimetableImporter !== 'undefined' && TimetableImporter.normalizeClassName)
+    ? TimetableImporter.normalizeClassName
+    : (v => (v || '').trim().toUpperCase().replace(/[\s\-_.]+/g, ''));
+  const userClassNorm = normFn(currentUser.profile?.grade || '');
+  const matchedClass = classKeys.find(cls => normFn(cls) === userClassNorm);
   const initialClass = matchedClass || classKeys[0];
 
   select.value = initialClass;
@@ -1828,12 +1831,13 @@ async function parseImageTimetable(file) {
   return result.slots.map(slot => {
     const parsed = parseSubjectAndTeacher(slot.title);
     let day = Number(slot.day);
-    if (day === 7) day = 0; // Normalize Sunday 7 -> 0
+    if (day === 7) day = 0;
     return {
       id: uid('img-slot'),
       day,
       title: parsed ? parsed.title : slot.title,
       subjectGroup: parsed ? parsed.subjectGroup : (slot.title || 'Môn học'),
+      teacher: parsed ? parsed.teacher || '' : '',
       start: slot.start,
       end: slot.end,
       type: 'school'
@@ -1842,6 +1846,9 @@ async function parseImageTimetable(file) {
 }
 
 function parseTextTimetable(text) {
+  if (typeof TimetableImporter !== 'undefined' && TimetableImporter.parseStructuredText) {
+    return TimetableImporter.parseStructuredText(text);
+  }
   const lines = text.split(/\r?\n/);
   const slots = [];
   let currentDay = 1;
@@ -1868,6 +1875,7 @@ function parseTextTimetable(text) {
           period,
           title: pObj.title,
           subjectGroup: pObj.subjectGroup,
+          teacher: pObj.teacher || '',
           start: times.start,
           end: times.end,
           type: 'school'
@@ -1880,21 +1888,109 @@ function parseTextTimetable(text) {
 }
 
 function renderImportPreview() {
+  const importer = typeof TimetableImporter !== 'undefined' ? TimetableImporter : null;
+  const existingFixed = (currentUser && currentUser.fixedSchedules) ? currentUser.fixedSchedules : [];
+  const validation = importer
+    ? importer.validateImportSlots(parsedImportSlots, existingFixed)
+    : { valid: true, errors: [], warnings: [], summary: { total: parsedImportSlots.length, validCount: parsedImportSlots.length, warningCount: 0, errorCount: 0 } };
+
+  // Render Summary Badges
+  const badgesEl = $('#importSummaryBadges');
+  if (badgesEl) {
+    const s = validation.summary;
+    badgesEl.innerHTML = `
+      <span class="import-summary-badge">Đã đọc: ${s.total} ca</span>
+      <span class="import-summary-badge success">✅ Hợp lệ: ${s.validCount}</span>
+      ${s.warningCount > 0 ? `<span class="import-summary-badge warning">⚠️ Cảnh báo: ${s.warningCount}</span>` : ''}
+      ${s.errorCount > 0 ? `<span class="import-summary-badge error">❌ Lỗi: ${s.errorCount}</span>` : ''}
+      ${selectedImportClassName ? `<span class="import-summary-badge">Lớp: ${escapeHTML(selectedImportClassName)}</span>` : ''}
+    `;
+  }
+
+  // Check manual schedule overlaps for warning banner
+  const conflictBanner = $('#importConflictBanner');
+  if (conflictBanner) {
+    const manualOverlaps = [];
+    if (importer) {
+      const mode = $('input[name="importMode"]:checked')?.value || 'replace';
+      const manualSchedules = mode === 'replace'
+        ? existingFixed.filter(item => item.source !== 'timetable-import' && !(item.type === 'school' && !item.source && (item.id.startsWith('fixed-school') || item.id.startsWith('imported'))))
+        : existingFixed;
+
+      for (const slot of parsedImportSlots) {
+        for (const ext of manualSchedules) {
+          const sDay = Number(slot.day) === 7 ? 0 : Number(slot.day);
+          const eDay = Number(ext.day) === 7 ? 0 : Number(ext.day);
+          if (sDay === eDay && slot.start && slot.end && ext.start && ext.end) {
+            const s1 = importer.timeToMinutes(slot.start);
+            const e1 = importer.timeToMinutes(slot.end);
+            const s2 = importer.timeToMinutes(ext.start);
+            const e2 = importer.timeToMinutes(ext.end);
+            if (Math.max(s1, s2) < Math.min(e1, e2) && !importer.isDuplicateScheduleEntry(ext, slot)) {
+              manualOverlaps.push({ slot, ext });
+            }
+          }
+        }
+      }
+    }
+
+    if (manualOverlaps.length > 0) {
+      conflictBanner.hidden = false;
+      conflictBanner.innerHTML = `⚠️ <b>Cảnh báo xung đột:</b> Có ${manualOverlaps.length} ca học bị trùng giờ với lịch cố định hiện tại. Bạn vui lòng kiểm tra hoặc điều chỉnh trước khi lưu.`;
+    } else {
+      conflictBanner.hidden = true;
+    }
+  }
+
   $('#parsedSlotCount').textContent = parsedImportSlots.length;
   const listEl = $('#previewSlotList');
+
   if (!parsedImportSlots.length) {
     listEl.innerHTML = `<div class="empty-state" style="padding:18px;">Không tìm thấy ca học nào trong tệp. Hãy thử tải tệp Word (.docx) hoặc ảnh TKB rõ nét hơn.</div>`;
     $('#applyTimetableBtn').disabled = true;
   } else {
-    listEl.innerHTML = parsedImportSlots.map((slot, idx) => `
-      <div class="preview-slot-item">
-        <span class="preview-slot-day">${dayNames[slot.day] || 'T' + (slot.day+1)}</span>
-        <span class="preview-slot-time">${slot.start}–${slot.end}</span>
-        <span class="preview-slot-name">${escapeHTML(slot.title)} <small style="color:#888;font-weight:normal;">${slot.periodLabel ? '(' + escapeHTML(slot.periodLabel) + ')' : ''}</small></span>
-        <button type="button" class="preview-slot-del" data-delete-import-slot="${idx}" aria-label="Xóa ca">×</button>
-      </div>
-    `).join('');
-    $('#applyTimetableBtn').disabled = false;
+    const errorMap = {};
+    const warningMap = {};
+    validation.errors.forEach(e => { errorMap[e.index] = e.messages; });
+    validation.warnings.forEach(w => { warningMap[w.index] = w.messages; });
+
+    listEl.innerHTML = parsedImportSlots.map((slot, idx) => {
+      const slotErrs = errorMap[idx] || [];
+      const slotWarns = warningMap[idx] || [];
+      const hasErr = slotErrs.length > 0;
+      const hasWarn = slotWarns.length > 0;
+
+      return `
+        <div class="preview-slot-item ${hasErr ? 'has-error' : (hasWarn ? 'has-warning' : '')}">
+          <div class="preview-slot-row">
+            <select class="preview-input-day" data-preview-idx="${idx}" data-field="day">
+              <option value="1" ${slot.day === 1 ? 'selected' : ''}>T2</option>
+              <option value="2" ${slot.day === 2 ? 'selected' : ''}>T3</option>
+              <option value="3" ${slot.day === 3 ? 'selected' : ''}>T4</option>
+              <option value="4" ${slot.day === 4 ? 'selected' : ''}>T5</option>
+              <option value="5" ${slot.day === 5 ? 'selected' : ''}>T6</option>
+              <option value="6" ${slot.day === 6 ? 'selected' : ''}>T7</option>
+              <option value="0" ${slot.day === 0 ? 'selected' : ''}>CN</option>
+            </select>
+            <input type="time" class="preview-input-time" data-preview-idx="${idx}" data-field="start" value="${escapeHTML(slot.start || '')}" placeholder="HH:MM" />
+            <span>–</span>
+            <input type="time" class="preview-input-time" data-preview-idx="${idx}" data-field="end" value="${escapeHTML(slot.end || '')}" placeholder="HH:MM" />
+            <input type="text" class="preview-input-title" data-preview-idx="${idx}" data-field="title" value="${escapeHTML(slot.title || '')}" placeholder="Tên môn học" />
+            <input type="text" class="preview-input-teacher" data-preview-idx="${idx}" data-field="teacher" value="${escapeHTML(slot.teacher || '')}" placeholder="Giáo viên" />
+            <button type="button" class="preview-slot-del" data-delete-import-slot="${idx}" aria-label="Xóa ca">×</button>
+          </div>
+          ${(hasErr || hasWarn || slot.periodLabel) ? `
+            <div class="preview-slot-messages">
+              ${slot.periodLabel ? `<span style="color:#666; margin-right: 6px;">${escapeHTML(slot.periodLabel)}</span>` : ''}
+              ${slotErrs.map(msg => `<span class="preview-msg-error">${escapeHTML(msg)}</span>`).join(' ')}
+              ${slotWarns.map(msg => `<span class="preview-msg-warning">${escapeHTML(msg)}</span>`).join(' ')}
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }).join('');
+
+    $('#applyTimetableBtn').disabled = !validation.valid;
   }
 
   $('#importStatus').hidden = true;
@@ -1903,34 +1999,74 @@ function renderImportPreview() {
 
 function applyImportedTimetable() {
   if (!parsedImportSlots.length) return;
+  const importer = typeof TimetableImporter !== 'undefined' ? TimetableImporter : null;
+
+  const existingFixed = (currentUser && currentUser.fixedSchedules) ? currentUser.fixedSchedules : [];
+  const validation = importer
+    ? importer.validateImportSlots(parsedImportSlots, existingFixed)
+    : { valid: true };
+
+  if (!validation.valid) {
+    toast('Thời khóa biểu còn lỗi. Vui lòng kiểm tra và sửa lại các ca trước khi lưu.');
+    return;
+  }
+
   const mode = $('input[name="importMode"]:checked')?.value || 'replace';
+  const importBatchId = 'tb-import-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+
+  const incomingDeduped = importer ? importer.dedupeScheduleEntries(parsedImportSlots) : parsedImportSlots;
 
   if (mode === 'replace') {
-    currentUser.fixedSchedules = currentUser.fixedSchedules.filter(item => item.type !== 'school');
+    currentUser.fixedSchedules = (currentUser.fixedSchedules || []).filter(item => {
+      if (item.source === 'timetable-import') return false;
+      if (item.type === 'school' && !item.source && (item.id.startsWith('fixed-school') || item.id.startsWith('imported'))) return false;
+      return true;
+    });
   }
 
   if (selectedImportClassName) {
     currentUser.profile.grade = `Lớp ${selectedImportClassName}`;
   }
 
-  parsedImportSlots.forEach(slot => {
+  let addedCount = 0;
+  let skippedCount = 0;
+
+  incomingDeduped.forEach(slot => {
+    if (mode === 'merge' && importer && currentUser.fixedSchedules.some(ext => importer.isDuplicateScheduleEntry(ext, slot))) {
+      skippedCount++;
+      return;
+    }
+
+    const dayNorm = Number(slot.day) === 7 ? 0 : Number(slot.day);
     currentUser.fixedSchedules.push({
       id: uid('fixed-school'),
-      title: slot.title + (slot.periodLabel ? ` (${slot.periodLabel})` : ''),
-      day: Number(slot.day) === 7 ? 0 : Number(slot.day),
+      title: slot.title + (slot.periodLabel && !slot.title.includes('Tiết') ? ` (${slot.periodLabel})` : ''),
+      subjectGroup: slot.subjectGroup || slot.title,
+      teacher: slot.teacher || '',
+      day: dayNorm,
+      periodStart: slot.periodStart || slot.period || null,
+      periodEnd: slot.periodEnd || slot.period || null,
       start: slot.start,
       end: slot.end,
       type: 'school',
-      flexible: false
+      flexible: false,
+      source: 'timetable-import',
+      importBatchId,
+      className: selectedImportClassName || ''
     });
+    addedCount++;
 
     const targetName = slot.subjectGroup || slot.title;
-    const existing = currentUser.subjects.find(s => s.name.toLowerCase() === targetName.toLowerCase());
-    if (!existing && !['Chào cờ', 'Sinh hoạt lớp', 'Thể dục / GDQP', 'Sinh hoạt', 'Hoạt động trải nghiệm'].includes(targetName)) {
-      const meta = SUBJECT_METADATA[targetName] || { color: 'custom', icon: targetName.slice(0, 1).toUpperCase() };
+    const existingSubject = currentUser.subjects.find(s => s.name.toLowerCase() === targetName.toLowerCase());
+    if (
+      !existingSubject &&
+      !['Chào cờ', 'Sinh hoạt lớp', 'Thể dục / GDQP', 'Sinh hoạt', 'Hoạt động trải nghiệm', 'Thể dục', 'Giáo dục quốc phòng'].some(name => name.toLowerCase() === targetName.toLowerCase())
+    ) {
+      const canonicalName = targetName.charAt(0).toUpperCase() + targetName.slice(1);
+      const meta = SUBJECT_METADATA[canonicalName] || { color: 'custom', icon: canonicalName.slice(0, 1).toUpperCase() };
       currentUser.subjects.push({
         id: uid('subject'),
-        name: targetName,
+        name: canonicalName,
         target: 'Môn học theo TKB',
         color: meta.color,
         icon: meta.icon,
@@ -1941,9 +2077,17 @@ function applyImportedTimetable() {
 
   persist();
   renderApp();
+  if (typeof notificationScheduler !== 'undefined' && notificationScheduler.reconcile) {
+    notificationScheduler.reconcile(currentUser);
+  }
   closeModal('importTimetableModal');
+
   const classMsg = selectedImportClassName ? `lớp ${selectedImportClassName} ` : '';
-  toast(`Đã cập nhật thành công TKB ${classMsg}(${parsedImportSlots.length} ca học)!`);
+  if (mode === 'merge' && skippedCount > 0) {
+    toast(`Đã gộp TKB ${classMsg}: Bỏ qua ${skippedCount} ca trùng. Đã thêm ${addedCount} ca mới!`);
+  } else {
+    toast(`Đã cập nhật thành công TKB ${classMsg}(${addedCount} ca học)!`);
+  }
   showPage('schedule');
 }
 
@@ -3337,6 +3481,42 @@ $('#takeNoteForm')?.addEventListener('submit', saveTakeNote);
 $('#addMilestoneForm')?.addEventListener('submit', addMilestone);
 $('#timetableFileInput')?.addEventListener('change', e => { if (e.target.files?.[0]) handleTimetableFile(e.target.files[0]); });
 $('#notePhotoInput')?.addEventListener('change', e => { if (e.target.files?.[0]) processNotePhoto(e.target.files[0]); });
+
+['input', 'change'].forEach(evtName => {
+  $('#previewSlotList')?.addEventListener(evtName, event => {
+    const input = event.target.closest('[data-preview-idx]');
+    if (!input) return;
+    const idx = parseInt(input.dataset.previewIdx, 10);
+    const field = input.dataset.field;
+    if (!parsedImportSlots[idx]) return;
+
+    if (field === 'day') {
+      parsedImportSlots[idx].day = parseInt(input.value, 10);
+    } else if (field === 'start') {
+      parsedImportSlots[idx].start = input.value.trim();
+    } else if (field === 'end') {
+      parsedImportSlots[idx].end = input.value.trim();
+    } else if (field === 'title') {
+      const rawVal = input.value.trim();
+      const importer = typeof TimetableImporter !== 'undefined' ? TimetableImporter : null;
+      const parsed = importer ? importer.parseSubjectAndTeacher(rawVal) : null;
+      if (parsed) {
+        parsedImportSlots[idx].title = parsed.title;
+        parsedImportSlots[idx].subjectGroup = parsed.subjectGroup;
+      } else {
+        parsedImportSlots[idx].title = rawVal;
+      }
+    } else if (field === 'teacher') {
+      parsedImportSlots[idx].teacher = input.value.trim();
+    }
+
+    renderImportPreview();
+  });
+});
+
+$$('input[name="importMode"]').forEach(radio => {
+  radio.addEventListener('change', renderImportPreview);
+});
 
 // Prevent browser from opening/downloading dropped files when dropped outside dropzone
 window.addEventListener('dragover', e => { e.preventDefault(); }, false);

@@ -265,10 +265,10 @@
         <p class="eyebrow">TỰ ĐỘNG TÍCH HỢP TKB</p>
         <h2 id="importTitle">Nhập Thời khóa biểu<br><em>từ Ảnh hoặc File</em></h2>
         <div class="dropzone" id="timetableDropzone">
-          <input type="file" id="timetableFileInput" accept=".png,.jpg,.jpeg,.webp,.docx,.doc,.txt" hidden />
+          <input type="file" id="timetableFileInput" accept=".png,.jpg,.jpeg,.webp,.docx,.txt" hidden />
           <span class="dropzone-icon">📥</span>
           <strong>Kéo thả hoặc chọn Ảnh / File Word TKB</strong>
-          <p>Hỗ trợ ảnh chụp màn hình, ảnh chụp giấy (.png, .jpg) hoặc file Word (.docx, .doc)</p>
+          <p>Hỗ trợ PNG, JPG, WebP, Word (.docx) hoặc TXT định dạng chuẩn</p>
           <button type="button" class="outline-button" id="browseTimetableBtn">Chọn tệp từ máy</button>
         </div>
         <div class="import-status" id="importStatus" hidden>
@@ -284,15 +284,17 @@
             <h3 style="font-size: 13px; margin: 0;">Lịch học <span id="parsedClassLabel" style="color:#6458cc; font-weight:700;"></span> (<span id="parsedSlotCount">0</span> ca)</h3>
             <span class="eyebrow">KIỂM TRA TRƯỚC KHI LƯU</span>
           </div>
+          <div class="import-summary-badges" id="importSummaryBadges"></div>
+          <div class="import-conflict-banner" id="importConflictBanner" hidden></div>
           <div class="preview-slot-list" id="previewSlotList"></div>
           <div class="import-actions-bar">
             <label class="radio-label">
               <input type="radio" name="importMode" value="replace" checked />
-              <span><b>Thay thế TKB cũ</b> (Khuyên dùng khi đổi TKB trường)</span>
+              <span><b>Thay thế TKB cũ</b> (Khuyên dùng khi đổi TKB trường, bảo toàn lịch cá nhân/học thêm)</span>
             </label>
             <label class="radio-label">
               <input type="radio" name="importMode" value="merge" />
-              <span><b>Gộp thêm vào lịch hiện tại</b> (Thêm ca học thêm / CLB)</span>
+              <span><b>Gộp thêm vào lịch hiện tại</b> (Tự động bỏ qua các ca đã có)</span>
             </label>
           </div>
           <div class="form-modal-actions" style="margin-top: 15px;">
@@ -558,6 +560,7 @@
     <script src="./src/ai/deadline-intelligence.js"></script>
     <script src="./src/ai/reschedule-engine.js"></script>
     <script src="./src/ai/index.js"></script>
+    <script src="./src/timetable/timetable-importer.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>
