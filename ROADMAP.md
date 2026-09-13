@@ -1,4 +1,4 @@
-﻿# ROADMAP — Smart Study Planner (TB)
+# ROADMAP — Smart Study Planner (TB)
 
 ## Phase 0: Core Architecture & Foundations (COMPLETED)
 - [x] **P0.1 — Authentication & Session Hardening**: HttpOnly cookie session management, client token removal.
@@ -24,8 +24,19 @@
   - In-modal per-action date/time adjustments & remove controls with live quality recalculation.
   - Production deployment on Vercel (`calender-jsf2.vercel.app`).
   - 39 automated tests covering all planner mechanics (243/243 tests green).
+- [x] **P1.3 — Smart Reschedule + Conflict Intelligence + Deadline Intelligence ("Fix My Day")**:
+  - Context canonicalization & high-precision double-djb2 revision fingerprint (`planningContextRevision`).
+  - Deterministic Conflict Intelligence (`src/ai/conflict-intelligence.js`) with HARD & SOFT conflict classifications.
+  - Schedule Drift Detection (`src/ai/schedule-drift.js`) identifying overdue & late tasks and remaining availability.
+  - Deadline Intelligence (`src/ai/deadline-intelligence.js`) with deterministic risk tiers (`safe`, `watch`, `at_risk`, `critical`, `impossible`).
+  - Smart Reschedule Engine (`src/ai/reschedule-engine.js`) honoring strict constraint priority, minimum necessary changes (`changeCost`), and multi-day spillover.
+  - Plan Quality Evaluator upgraded with `changeCost` metric and before vs after score comparisons.
+  - Today Dashboard Attention Center enhanced with prominent `🪄 Fix My Day` action trigger.
+  - Review Modal enhanced with Reschedule Diff view (`What Changed`), risk overview, quality delta pill, and per-action live adjustments.
+  - Atomic Apply & Notification Reconciliation.
+  - 26 tests covering P1.3 mechanics (269/269 tests green across 9 suites).
 
 ## Phase 2: Autonomous AI Time Management (UPCOMING)
-- [ ] **P2.1 — AI Reschedule & Conflict Resolver**: Smart conflict resolution when real-world delays occur.
+- [ ] **P2.1 — Conversational Schedule Dialogue**: Multi-turn chat assistant for schedule adjustments.
 - [ ] **P2.2 — Study Habit Analytics & Fatigue Awareness**: Dynamic break recommendations based on student focus patterns.
-- [ ] **P2.3 — Natural Language Dialogue & Chat Assistant**: Conversational schedule adjustments and voice/audio capture.
+- [ ] **P2.3 — Multi-Modal Audio & Voice Capture**: Direct speech-to-intent quick capture.

@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 /**
  * @file plan-evaluator.js
@@ -252,6 +252,15 @@
       strengths.push('Cac khoi hoc tap lien tuc, khong bi phan manh');
     }
 
+    // ── Metric 8: Change Cost (Minimum Necessary Changes) ───────────────────
+    var changeCost = proposal.changeCost !== undefined
+      ? Number(proposal.changeCost)
+      : actions.filter(function(a) { return a.type === 'move_task' || a.previousStartTime; }).length;
+
+    if (changeCost > 0 && changeCost <= 3 && actions.length > 0) {
+      strengths.push('Toi uu thay doi: Chi dieu chinh ' + changeCost + ' nhiem vu can thiet');
+    }
+
     // ── Free minutes remaining (approximate) ──────────────────────────────────
     var availableMin = availEndMin - availStartMin;
     var freeMinutesRemaining = Math.max(0, availableMin - totalScheduledMinutes);
@@ -270,12 +279,29 @@
         focusBlocksCount: focusBlocksCount,
         fragmentationRate: fragmentationRate,
         daysCovered: daysCovered,
-        conflictsCount: conflictsCount
+        conflictsCount: conflictsCount,
+        changeCost: changeCost
       }
     };
   }
 
+  /**
+   * Compares the quality of the current baseline schedule vs the new proposal.
+   */
+  function evaluateRescheduleComparison(currentScheduleActions, proposedProposal, context) {
+    var before = evaluatePlanQuality({ actions: currentScheduleActions || [] }, context);
+    var after = evaluatePlanQuality(proposedProposal, context);
+    return {
+      beforeScore: before.score,
+      afterScore: after.score,
+      scoreDiff: after.score - before.score,
+      changeCost: after.metrics.changeCost,
+      improved: after.score >= before.score
+    };
+  }
+
   return {
-    evaluatePlanQuality: evaluatePlanQuality
+    evaluatePlanQuality: evaluatePlanQuality,
+    evaluateRescheduleComparison: evaluateRescheduleComparison
   };
 }));

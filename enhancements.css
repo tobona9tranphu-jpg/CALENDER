@@ -2073,3 +2073,108 @@
   .ai-action-edit-row { flex-direction: column; align-items: flex-start; }
   .ai-action-remove-btn { margin-left: 0; }
 }
+
+/* ── P1.3: Fix My Day & Attention Banner Action ────────────────────────────── */
+.fix-my-day-btn {
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.fix-my-day-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+}
+
+/* ── P1.3: Reschedule Diff Box in Review Modal ─────────────────────────────── */
+.ai-reschedule-diff-box {
+  background: #fdfbf7;
+  border: 1px solid #faeed9;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+.ai-diff-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.ai-quality-comparison {
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: #eef2ff;
+  color: #4338ca;
+  font-family: 'DM Mono', monospace;
+}
+.ai-diff-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.ai-diff-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  background: #fff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #f0e6d6;
+}
+.ai-diff-title {
+  font-weight: 600;
+  color: #2b2823;
+  flex: 1;
+}
+.ai-diff-old {
+  color: #92400e;
+  text-decoration: line-through;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.78rem;
+}
+.ai-diff-arrow {
+  color: #6b7280;
+  font-size: 0.8rem;
+}
+.ai-diff-new {
+  color: #15803d;
+  font-weight: 600;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.8rem;
+}
+
+/* ── P1.3: Risk & Capacity Badges ─────────────────────────────────────────── */
+.ai-risk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+}
+.ai-risk-pill {
+  font-size: 0.75rem;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ai-risk-pill.risk-safe { background: #dcfce7; color: #15803d; }
+.ai-risk-pill.risk-watch { background: #fef9c3; color: #854d0e; }
+.ai-risk-pill.risk-at_risk { background: #ffedd5; color: #c2410c; }
+.ai-risk-pill.risk-critical { background: #fee2e2; color: #b91c1c; }
+.ai-risk-pill.risk-impossible { background: #450a0a; color: #fecaca; }

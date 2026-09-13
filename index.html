@@ -155,6 +155,11 @@
               <strong>CẦN CHÚ Ý</strong>
             </div>
             <div class="attention-list" id="todayAttentionList"></div>
+            <div class="attention-action-row" id="todayAttentionActionRow" style="margin-top: 10px;" hidden>
+              <button type="button" class="primary-button fix-my-day-btn" id="fixMyDayBtn">
+                🪄 Sửa lịch hôm nay (Fix My Day)
+              </button>
+            </div>
           </div>
 
           <!-- 5. TODAY TIMELINE & EXAM COUNTDOWN -->
@@ -469,6 +474,16 @@
           <ul class="ai-quality-warnings" id="aiQualityWarningsList"></ul>
         </div>
 
+        <!-- Reschedule Diff & Risk Overview (P1.3) -->
+        <div class="ai-reschedule-diff-box" id="aiRescheduleDiffBox" hidden>
+          <div class="ai-diff-header">
+            <h4 class="ai-preview-section-title">Thay đổi đề xuất (What Changed):</h4>
+            <div class="ai-quality-comparison" id="aiQualityComparison"></div>
+          </div>
+          <div class="ai-diff-list" id="aiRescheduleDiffList"></div>
+          <div class="ai-risk-row" id="aiRiskRow"></div>
+        </div>
+
         <!-- Structured Intent Chips -->
         <div class="ai-intent-breakdown" id="aiIntentBreakdown">
           <div class="ai-chip-group" id="aiFixedChips">
@@ -538,6 +553,10 @@
     <script src="./src/ai/ai-provider.js"></script>
     <script src="./src/ai/planner-engine.js"></script>
     <script src="./src/ai/plan-evaluator.js"></script>
+    <script src="./src/ai/conflict-intelligence.js"></script>
+    <script src="./src/ai/schedule-drift.js"></script>
+    <script src="./src/ai/deadline-intelligence.js"></script>
+    <script src="./src/ai/reschedule-engine.js"></script>
     <script src="./src/ai/index.js"></script>
     <script src="./app.js"></script>
   </body>

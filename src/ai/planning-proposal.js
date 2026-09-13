@@ -65,7 +65,10 @@
           date,
           startTime,
           endTime,
-          durationMinutes
+          durationMinutes,
+          previousDate: act.previousDate || null,
+          previousStartTime: act.previousStartTime || null,
+          previousEndTime: act.previousEndTime || null
         };
       }),
       warnings: (warnings || []).map(w => String(w).trim()),

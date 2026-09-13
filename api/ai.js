@@ -3,6 +3,7 @@
 const { send, readBody, preflight } = require('../lib/http');
 const { getUserId } = require('../lib/auth');
 const { GeminiServerProvider, DeterministicFallbackProvider } = require('../src/ai/ai-provider');
+const { generateReschedulePlan } = require('../src/ai/reschedule-engine');
 const AppDate = require('../src/utils/date');
 
 /**
@@ -115,6 +116,18 @@ module.exports = async function handler(req, res) {
         source: 'deterministic',
         fallbackReason: result.status,
         proposal: fallbackResult.proposal
+      });
+    }
+
+    if (action === 'fix_day' || action === 'reschedule' || action === 'resolve_conflict') {
+      const proposal = generateReschedulePlan(sanitizedContext, {
+        currentDate: sanitizedContext.currentDate,
+        currentTime: sanitizedContext.currentTime
+      });
+      return send(res, 200, {
+        ok: true,
+        source: 'smart_engine',
+        proposal
       });
     }
 

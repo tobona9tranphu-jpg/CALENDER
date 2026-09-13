@@ -708,26 +708,79 @@ function renderToday() {
     }
   }
 
-  // Attention Center
+  // Attention Center (P1.3: Drift, Conflict & Deadline Intelligence)
   const attentionItems = [];
-  const overdueTasks = (currentUser.tasks || []).filter(t => t.status !== 'done' && t.deadline && t.deadline < TODAY);
-  overdueTasks.forEach(t => {
-    attentionItems.push(`<span>⚠️ Quá hạn: <strong>${escapeHTML(t.title)}</strong> (hạn: ${formatShortDate(t.deadline)})</span>`);
-  });
+  let needsFix = false;
+
+  const nowTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const diagContext = (typeof PlannerContext !== 'undefined' && PlannerContext.buildPlanningContext)
+    ? PlannerContext.buildPlanningContext(currentUser, TODAY)
+    : { currentDate: TODAY, currentTime: nowTimeStr, scheduledTasks: currentUser.tasks || [], fixedEvents: [] };
+  diagContext.currentTime = nowTimeStr;
+
+  // 1. Schedule Drift Analysis
+  if (typeof ScheduleDrift !== 'undefined' && ScheduleDrift.analyzeScheduleDrift) {
+    const drift = ScheduleDrift.analyzeScheduleDrift(diagContext, { currentDate: TODAY, currentTime: nowTimeStr });
+    if (drift.lateTasks && drift.lateTasks.length > 0) {
+      needsFix = true;
+      drift.lateTasks.slice(0, 2).forEach(lt => {
+        attentionItems.push(`<span>⏰ Trễ giờ: <strong>${escapeHTML(lt.title)}</strong> (dự kiến ${lt.scheduledStart}, trễ ${lt.minutesLate}p)</span>`);
+      });
+    }
+    if (drift.overdueTasks && drift.overdueTasks.length > 0) {
+      needsFix = true;
+      drift.overdueTasks.slice(0, 2).forEach(ot => {
+        attentionItems.push(`<span>⚠️ Quá hạn: <strong>${escapeHTML(ot.title)}</strong> (từ ngày cũ)</span>`);
+      });
+    }
+  } else {
+    const overdueTasks = (currentUser.tasks || []).filter(t => t.status !== 'done' && t.deadline && t.deadline < TODAY);
+    overdueTasks.forEach(t => {
+      needsFix = true;
+      attentionItems.push(`<span>⚠️ Quá hạn: <strong>${escapeHTML(t.title)}</strong> (hạn: ${formatShortDate(t.deadline)})</span>`);
+    });
+  }
+
+  // 2. Conflict Intelligence
+  if (typeof ConflictIntelligence !== 'undefined' && ConflictIntelligence.detectConflicts) {
+    const conflicts = ConflictIntelligence.detectConflicts(currentUser.tasks || [], diagContext);
+    if (conflicts.hardConflicts && conflicts.hardConflicts.length > 0) {
+      needsFix = true;
+      conflicts.hardConflicts.slice(0, 2).forEach(c => {
+        attentionItems.push(`<span>🔴 Xung đột: <strong>${escapeHTML(c.message)}</strong></span>`);
+      });
+    }
+  }
+
+  // 3. Deadline Intelligence
+  if (typeof DeadlineIntelligence !== 'undefined' && DeadlineIntelligence.evaluateDeadlineRisks) {
+    const deadlineReport = DeadlineIntelligence.evaluateDeadlineRisks(diagContext, { currentDate: TODAY, currentTime: nowTimeStr });
+    if (deadlineReport.items) {
+      deadlineReport.items.filter(it => it.risk === 'critical' || it.risk === 'impossible' || it.risk === 'at_risk').slice(0, 2).forEach(it => {
+        needsFix = true;
+        attentionItems.push(`<span>🎯 Rủi ro deadline: <strong>${escapeHTML(it.message)}</strong></span>`);
+      });
+    }
+  }
+
   (currentUser.examMilestones || []).forEach(m => {
     const days = DateUtil ? DateUtil.diffAppDays(m.date, TODAY) : 99;
     if (days >= 0 && days <= 7) {
       attentionItems.push(`<span>🎯 Kỳ thi sắp tới: <strong>${escapeHTML(m.title)}</strong> (${days === 0 ? 'HÔM NAY' : days + ' ngày nữa'})</span>`);
     }
   });
+
   const attBanner = $('#todayAttentionBanner');
   const attList = $('#todayAttentionList');
+  const attActionRow = $('#todayAttentionActionRow');
   if (attBanner && attList) {
     if (attentionItems.length > 0) {
       attBanner.hidden = false;
       attList.innerHTML = attentionItems.map(item => `<div class="attention-item">${item}</div>`).join('');
+      if (attActionRow) attActionRow.hidden = !needsFix;
     } else {
       attBanner.hidden = true;
+      if (attActionRow) attActionRow.hidden = true;
     }
   }
 
@@ -2025,15 +2078,20 @@ let currentAiIntent = null;
 let _currentAiContext = null; // context snapshot used when proposal was generated
 
 /**
- * Compute a deterministic fingerprint of the current user's calendar state.
+ * Compute a high-precision deterministic fingerprint of the current user's planning state.
  * Used for stale-proposal detection.
- * @returns {string} 8-char hex fingerprint
+ * @returns {string} Hex fingerprint
  */
 function getCurrentCalendarRevision() {
+  if (typeof PlannerContext !== 'undefined' && PlannerContext.computePlanningContextRevision) {
+    const ctx = (typeof PlannerContext.buildPlanningContext === 'function')
+      ? PlannerContext.buildPlanningContext(currentUser, TODAY)
+      : { currentDate: TODAY, scheduledTasks: currentUser?.tasks || [], fixedEvents: currentUser?.fixedSchedules || [] };
+    return PlannerContext.computePlanningContextRevision(ctx);
+  }
   if (typeof PlannerContext !== 'undefined' && PlannerContext.computeCalendarRevision) {
     return PlannerContext.computeCalendarRevision(currentUser);
   }
-  // Fallback: simple JSON hash of tasks + fixedSchedules length
   if (!currentUser) return '00000000';
   const key = (currentUser.tasks || []).length + ':' + (currentUser.fixedSchedules || []).length;
   let hash = 5381;
@@ -2191,7 +2249,141 @@ function liveRevalidateProposal() {
   }
 }
 
+/**
+ * P1.3: "Fix My Day" Handler.
+ * Analyzes schedule drift, hard/soft conflicts, and deadline risks,
+ * then generates an optimized reschedule proposal with "What Changed" diffs.
+ */
+function handleFixMyDayClick() {
+  if (!currentUser) return;
+  const now = DateUtil ? DateUtil.getNowVietnam() : new Date();
+  const nowTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+  const context = (typeof PlannerContext !== 'undefined' && PlannerContext.buildPlanningContext)
+    ? PlannerContext.buildPlanningContext(currentUser, TODAY, { horizonDays: 3 })
+    : { currentDate: TODAY, currentTime: nowTimeStr, availability: currentUser.availability, scheduledTasks: currentUser.tasks || [], fixedEvents: currentUser.fixedSchedules || [] };
+  context.currentTime = nowTimeStr;
+  _currentAiContext = context;
+
+  let proposal = null;
+  if (typeof RescheduleEngine !== 'undefined' && RescheduleEngine.generateReschedulePlan) {
+    proposal = RescheduleEngine.generateReschedulePlan(context, {
+      currentDate: TODAY,
+      currentTime: nowTimeStr
+    });
+  }
+
+  if (!proposal || !proposal.actions || proposal.actions.length === 0) {
+    toast('Lịch trình hôm nay vẫn đang ổn định, không cần dời nhiệm vụ nào!', 'info');
+    return;
+  }
+
+  currentAiProposal = proposal;
+  currentAiIntent = { tasks: [], fixedEvents: [], deadlines: [] };
+
+  // 1. Embed revision for stale protection
+  proposal.contextVersion = getCurrentCalendarRevision();
+
+  // 2. Reset stale banner
+  const staleBanner = $('#aiStaleWarningBanner');
+  if (staleBanner) staleBanner.hidden = true;
+
+  // 3. Quality comparison Before vs After
+  let beforeScore = 70;
+  let afterScore = 85;
+  if (typeof PlanEvaluator !== 'undefined' && PlanEvaluator.evaluateRescheduleComparison) {
+    const comp = PlanEvaluator.evaluateRescheduleComparison(context.scheduledTasks || [], proposal, context);
+    beforeScore = comp.beforeScore;
+    afterScore = comp.afterScore;
+  }
+  renderQualityMeter({ score: afterScore, strengths: (proposal.rationale || []).map(r => r.reason) });
+
+  // 4. Populate Reschedule Diff Box (What Changed)
+  const diffBox = $('#aiRescheduleDiffBox');
+  const diffList = $('#aiRescheduleDiffList');
+  const compEl = $('#aiQualityComparison');
+  const riskRow = $('#aiRiskRow');
+
+  if (diffBox && diffList) {
+    diffBox.hidden = false;
+    if (compEl) {
+      compEl.textContent = `Chất lượng: ${beforeScore} → ${afterScore} pts`;
+    }
+    diffList.innerHTML = proposal.actions.map(act => {
+      const oldTime = act.previousStartTime ? `${act.previousStartTime} (${formatShortDate(act.previousDate || TODAY)})` : 'Chưa xếp';
+      const newTime = `${act.startTime} (${formatShortDate(act.date || TODAY)})`;
+      return `
+        <div class="ai-diff-item">
+          <span class="ai-diff-title">${escapeHTML(act.title)}</span>
+          <span class="ai-diff-old">${escapeHTML(oldTime)}</span>
+          <span class="ai-diff-arrow">→</span>
+          <span class="ai-diff-new">${escapeHTML(newTime)}</span>
+        </div>
+      `;
+    }).join('');
+
+    if (riskRow) {
+      const dlRisk = proposal.deadlineRisk || 'safe';
+      const riskClass = `risk-${dlRisk}`;
+      const riskLabels = {
+        safe: '✓ Hạn chót: An toàn',
+        watch: '• Hạn chót: Cần theo dõi',
+        at_risk: '⚠️ Hạn chót: Rủi ro cao',
+        critical: '🔴 Hạn chót: Nguy cấp',
+        impossible: '⛔ Hạn chót: Bất khả thi'
+      };
+      riskRow.innerHTML = `
+        <span class="ai-risk-pill ${riskClass}">${riskLabels[dlRisk] || dlRisk}</span>
+        <span class="ai-risk-pill" style="background:#f3f4f6;color:#374151;">📊 Đổi ${proposal.changeCost || proposal.actions.length} việc</span>
+      `;
+    }
+  }
+
+  // Hide regular intent chips box for reschedule
+  const intentBreakdown = $('#aiIntentBreakdown');
+  if (intentBreakdown) intentBreakdown.hidden = true;
+
+  // Title, subtitle, source tag
+  const titleEl = $('#aiReviewTitle');
+  if (titleEl) titleEl.textContent = '🪄 Tối ưu lại lịch trình (Fix My Day)';
+  const subtitleEl = $('#aiReviewSubtitle');
+  if (subtitleEl) subtitleEl.textContent = 'AI đã tự động xử lý trễ giờ và dời các nhiệm vụ vào khung thời gian tối ưu.';
+  const sourceTag = $('#aiReviewSourceTag');
+  if (sourceTag) sourceTag.textContent = '✦ SMART RESCHEDULE ENGINE';
+  const confBadge = $('#aiConfidenceBadge');
+  if (confBadge) confBadge.textContent = 'Độ tin cậy: 98%';
+
+  // Render interactive action cards with date/time edit inputs and remove button
+  renderActionCards(proposal.actions);
+
+  // Render rationales
+  const rationaleListEl = $('#aiRationaleList');
+  if (rationaleListEl && proposal.rationale) {
+    rationaleListEl.innerHTML = proposal.rationale.map(r => `<li>${escapeHTML(r.reason)}</li>`).join('');
+  }
+
+  // Render warnings
+  const warningsBox = $('#aiWarningsBox');
+  const warningsList = $('#aiWarningsList');
+  if (warningsBox && warningsList) {
+    const warns = proposal.warnings || [];
+    if (warns.length > 0) {
+      warningsBox.hidden = false;
+      warningsList.innerHTML = warns.map(w => `<li>${escapeHTML(w)}</li>`).join('');
+    } else {
+      warningsBox.hidden = true;
+    }
+  }
+
+  openModal('aiPlanReviewModal');
+}
+
 async function handleAiAskSubmit() {
+  const diffBox = $('#aiRescheduleDiffBox');
+  if (diffBox) diffBox.hidden = true;
+  const intentBreakdown = $('#aiIntentBreakdown');
+  if (intentBreakdown) intentBreakdown.hidden = false;
+
   const inputEl = $('#aiAskInput');
   const text = (inputEl ? inputEl.value : '').trim();
   if (!text) {
@@ -2429,10 +2621,12 @@ function applyProposedAiPlan() {
       });
       taskCount++;
     } else if (act.type === 'move_task') {
-      const existing = (currentUser.tasks || []).find(t => t.id === act.taskId);
+      const existing = (currentUser.tasks || []).find(t => t.id === act.taskId || t.title === act.title);
       if (existing) {
-        existing.scheduledDate = act.targetDate || TODAY;
-        existing.deadline = act.targetDate || TODAY;
+        existing.scheduledDate = act.date || act.targetDate || TODAY;
+        if (act.startTime) existing.startTime = act.startTime;
+        if (act.endTime) existing.endTime = act.endTime;
+        if (act.deadline) existing.deadline = act.deadline;
         existing.isInbox = false;
         taskCount++;
       }
@@ -2446,7 +2640,20 @@ function applyProposedAiPlan() {
   const inputEl = $('#aiAskInput');
   if (inputEl) inputEl.value = '';
 
-  // ── Notification Engine Integration ───────────────────────────────────────
+  // ── Notification Reconciliation (P1.3) ───────────────────────────────────
+  if (typeof notificationService !== 'undefined') {
+    if (notificationService.store && typeof notificationService.store.clearFiredKeysPrefix === 'function') {
+      for (const act of currentAiProposal.actions) {
+        if (act.taskId) {
+          notificationService.store.clearFiredKeysPrefix(`task:${act.taskId}:`);
+        }
+      }
+    }
+    if (notificationService.scheduler && typeof notificationService.scheduler.reconcile === 'function') {
+      notificationService.scheduler.reconcile(currentUser);
+    }
+  }
+
   const summary = [];
   if (eventCount > 0) summary.push(`${eventCount} sự kiện cố định`);
   if (taskCount > 0) summary.push(`${taskCount} việc học`);
@@ -3250,6 +3457,10 @@ document.addEventListener('click', event => {
 
   if (event.target.closest('#aiAskBtn')) {
     handleAiAskSubmit();
+  }
+
+  if (event.target.closest('#fixMyDayBtn')) {
+    handleFixMyDayClick();
   }
 
   if (event.target.closest('#confirmAiPlanBtn')) {

@@ -22,9 +22,133 @@
 }(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this), function (DateUtil, RecurrenceUtil) {
 
   /**
+   * Stably canonicalizes a planning context object:
+   * - Strips sensitive / transient fields
+   * - Recursively sorts object keys alphabetically
+   * - Stably sorts all arrays by deterministic compound keys
+   *
+   * @param {Object} context
+   * @returns {Object} Canonical object
+   */
+  function canonicalizePlanningContext(context) {
+    if (!context || typeof context !== 'object') return {};
+
+    // 1. Availability
+    const rawAvail = context.availability || {};
+    const availability = {
+      days: Array.isArray(rawAvail.days) ? [...rawAvail.days].map(Number).sort((a, b) => a - b) : [0, 1, 2, 3, 4, 5, 6],
+      end: String(rawAvail.end || '21:30'),
+      start: String(rawAvail.start || '15:00')
+    };
+
+    // 2. Fixed events (stable sort: date -> start -> end -> title -> id)
+    const fixedEvents = (context.fixedEvents || []).map(e => ({
+      date: String(e.date || ''),
+      end: String(e.end || ''),
+      id: String(e.id || ''),
+      start: String(e.start || ''),
+      title: String(e.title || '').trim(),
+      type: String(e.type || 'fixed')
+    })).sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      if (a.start !== b.start) return a.start.localeCompare(b.start);
+      if (a.end !== b.end) return a.end.localeCompare(b.end);
+      if (a.title !== b.title) return a.title.localeCompare(b.title);
+      return a.id.localeCompare(b.id);
+    });
+
+    // 3. Scheduled tasks (stable sort: scheduledDate -> startTime -> id -> title)
+    const scheduledTasks = (context.scheduledTasks || []).map(t => ({
+      deadline: t.deadline ? String(t.deadline) : null,
+      durationMinutes: Number(t.durationMinutes || t.minutes || 0),
+      endTime: t.endTime ? String(t.endTime) : null,
+      id: String(t.id || ''),
+      priority: Number(t.priority || 3),
+      scheduledDate: t.scheduledDate ? String(t.scheduledDate) : null,
+      startTime: t.startTime ? String(t.startTime) : null,
+      title: String(t.title || '').trim()
+    })).sort((a, b) => {
+      const dateA = a.scheduledDate || '';
+      const dateB = b.scheduledDate || '';
+      if (dateA !== dateB) return dateA.localeCompare(dateB);
+      const timeA = a.startTime || '';
+      const timeB = b.startTime || '';
+      if (timeA !== timeB) return timeA.localeCompare(timeB);
+      if (a.id !== b.id) return a.id.localeCompare(b.id);
+      return a.title.localeCompare(b.title);
+    });
+
+    // 4. Inbox items (stable sort: priority desc -> id -> title)
+    const inboxItems = (context.inboxItems || []).map(i => ({
+      durationMinutes: Number(i.durationMinutes || i.minutes || 0),
+      id: String(i.id || ''),
+      priority: Number(i.priority || 3),
+      title: String(i.title || '').trim()
+    })).sort((a, b) => {
+      if (b.priority !== a.priority) return b.priority - a.priority;
+      if (a.id !== b.id) return a.id.localeCompare(b.id);
+      return a.title.localeCompare(b.title);
+    });
+
+    // 5. Deadlines (stable sort: date -> title)
+    const deadlines = (context.deadlines || []).map(d => ({
+      date: String(d.date || ''),
+      daysUntil: Number(d.daysUntil || 0),
+      subjects: String(d.subjects || ''),
+      title: String(d.title || '').trim()
+    })).sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      return a.title.localeCompare(b.title);
+    });
+
+    // 6. Preferences
+    const userPreferences = {
+      coach: context.userPreferences?.coach !== false,
+      reminders: context.userPreferences?.reminders !== false
+    };
+
+    return {
+      availability,
+      currentDate: String(context.currentDate || ''),
+      currentTime: String(context.currentTime || ''),
+      deadlines,
+      fixedEvents,
+      horizonDays: Number(context.horizonDays || 2),
+      inboxItems,
+      scheduledTasks,
+      timezone: 'Asia/Ho_Chi_Minh',
+      userPreferences
+    };
+  }
+
+  /**
+   * Computes a high-precision deterministic revision hash for the entire planning context.
+   * Changes whenever ANY planner-affecting state changes (durations, priorities, deadlines,
+   * events, availability, etc.), but produces identical hashes for reordered inputs.
+   *
+   * @param {Object} context
+   * @returns {string} 16-char hex fingerprint
+   */
+  function computePlanningContextRevision(context) {
+    const canonical = canonicalizePlanningContext(context);
+    const serialized = JSON.stringify(canonical);
+
+    // Double djb2 hash to produce a 64-bit hexadecimal string (16 chars)
+    let h1 = 5381;
+    let h2 = 52711;
+    for (let i = 0; i < serialized.length; i++) {
+      const code = serialized.charCodeAt(i);
+      h1 = ((h1 << 5) + h1) ^ code;
+      h1 = h1 >>> 0;
+      h2 = ((h2 << 5) + h2) ^ (code + i);
+      h2 = h2 >>> 0;
+    }
+    return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0');
+  }
+
+  /**
    * Computes a deterministic fingerprint of the user's calendar state.
-   * Used for stale-proposal detection: if the calendar changes after a proposal
-   * is generated, the revision will differ and the proposal is rejected.
+   * Used for backward-compatibility in P1.1 / P1.2.
    *
    * @param {Object} user
    * @returns {string} Hex string revision fingerprint
@@ -55,11 +179,10 @@
 
     const canonical = JSON.stringify({ fixedNorm, tasksNorm });
 
-    // Deterministic djb2 hash (no crypto dependency)
     let hash = 5381;
     for (let i = 0; i < canonical.length; i++) {
       hash = ((hash << 5) + hash) ^ canonical.charCodeAt(i);
-      hash = hash >>> 0; // keep unsigned 32-bit
+      hash = hash >>> 0;
     }
     return hash.toString(16).padStart(8, '0');
   }
@@ -179,7 +302,7 @@
       coach: user?.settings?.coach !== false
     };
 
-    return {
+    const resultContext = {
       currentDate,
       currentTime,
       timezone: 'Asia/Ho_Chi_Minh',
@@ -193,6 +316,9 @@
       calendarRevision: computeCalendarRevision(user),
       horizonDays: horizon
     };
+
+    resultContext.planningContextRevision = computePlanningContextRevision(resultContext);
+    return resultContext;
   }
 
   /**
@@ -222,6 +348,8 @@
 
   return {
     buildPlanningContext,
+    canonicalizePlanningContext,
+    computePlanningContextRevision,
     computeCalendarRevision,
     isContextSanitized
   };

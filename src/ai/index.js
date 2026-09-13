@@ -2,15 +2,19 @@
 
 /**
  * @file index.js
- * Unified entry point for AI Time Management Foundation (P1.1 + P1.2).
+ * Unified entry point for AI Time Management System (P1.1, P1.2, P1.3).
  *
  * Exposes:
  * - IntentSchema (createIntent, validateIntent, needsClarification)
- * - PlannerContext (buildPlanningContext, computeCalendarRevision, isContextSanitized)
+ * - PlannerContext (buildPlanningContext, canonicalizePlanningContext, computePlanningContextRevision, computeCalendarRevision, isContextSanitized)
  * - PlanningProposal (createPlanningProposal, validatePlanningProposal)
  * - AIProvider (AIProvider, PlaceholderAIProvider, DeterministicFallbackProvider, GeminiServerProvider, ClientAIAdapter)
- * - PlannerEngine (scheduleTasks, getFreeSlots, totalFreeMinutes, buildCapacityWarning) [P1.2]
- * - PlanEvaluator (evaluatePlanQuality) [P1.2]
+ * - PlannerEngine (scheduleTasks, getFreeSlots, totalFreeMinutes, buildCapacityWarning)
+ * - PlanEvaluator (evaluatePlanQuality, evaluateRescheduleComparison)
+ * - ConflictIntelligence (detectConflicts) [P1.3]
+ * - ScheduleDrift (analyzeScheduleDrift) [P1.3]
+ * - DeadlineIntelligence (evaluateDeadlineRisks, formatDurationVi) [P1.3]
+ * - RescheduleEngine (generateReschedulePlan) [P1.3]
  */
 
 (function (root, factory) {
@@ -21,7 +25,22 @@
     const AIProvider = require('./ai-provider');
     const PlannerEngine = require('./planner-engine');
     const PlanEvaluator = require('./plan-evaluator');
-    module.exports = factory(IntentSchema, PlannerContext, PlanningProposal, AIProvider, PlannerEngine, PlanEvaluator);
+    const ConflictIntelligence = require('./conflict-intelligence');
+    const ScheduleDrift = require('./schedule-drift');
+    const DeadlineIntelligence = require('./deadline-intelligence');
+    const RescheduleEngine = require('./reschedule-engine');
+    module.exports = factory(
+      IntentSchema,
+      PlannerContext,
+      PlanningProposal,
+      AIProvider,
+      PlannerEngine,
+      PlanEvaluator,
+      ConflictIntelligence,
+      ScheduleDrift,
+      DeadlineIntelligence,
+      RescheduleEngine
+    );
   } else {
     root.AIFoundation = factory(
       root.IntentSchema,
@@ -29,7 +48,11 @@
       root.PlanningProposal,
       root.AIProvider,
       root.PlannerEngine,
-      root.PlanEvaluator
+      root.PlanEvaluator,
+      root.ConflictIntelligence,
+      root.ScheduleDrift,
+      root.DeadlineIntelligence,
+      root.RescheduleEngine
     );
   }
 }(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this), function (
@@ -38,7 +61,11 @@
   PlanningProposal,
   AIProvider,
   PlannerEngine,
-  PlanEvaluator
+  PlanEvaluator,
+  ConflictIntelligence,
+  ScheduleDrift,
+  DeadlineIntelligence,
+  RescheduleEngine
 ) {
   return {
     ...IntentSchema,
@@ -47,11 +74,19 @@
     ...AIProvider,
     ...PlannerEngine,
     ...PlanEvaluator,
+    ...ConflictIntelligence,
+    ...ScheduleDrift,
+    ...DeadlineIntelligence,
+    ...RescheduleEngine,
     IntentSchema,
     PlannerContext,
     PlanningProposal,
     AIProvider,
     PlannerEngine,
-    PlanEvaluator
+    PlanEvaluator,
+    ConflictIntelligence,
+    ScheduleDrift,
+    DeadlineIntelligence,
+    RescheduleEngine
   };
 }));
