@@ -13,43 +13,118 @@ function parseModelJSON(text) {
   const trimmed = String(text || '').trim();
   if (!trimmed) throw validationError('AI không trả về dữ liệu thời khóa biểu.');
   try {
-    return JSON.parse(trimmed);
-  } catch {
-    const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-    if (!fenced) throw validationError('AI trả về dữ liệu không đúng định dạng JSON.');
-    try {
-      return JSON.parse(fenced[1]);
-    } catch {
-      throw validationError('AI trả về dữ liệu không đúng định dạng JSON.');
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === 'object') {
+      if (Array.isArray(parsed.slots)) return parsed.slots;
+      if (Array.isArray(parsed.timetable)) return parsed.timetable;
     }
+    return parsed;
+  } catch {}
+
+  // 1. Try markdown fenced block anywhere in text
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fenced) {
+    try {
+      const parsed = JSON.parse(fenced[1].trim());
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && typeof parsed === 'object') {
+        if (Array.isArray(parsed.slots)) return parsed.slots;
+        if (Array.isArray(parsed.timetable)) return parsed.timetable;
+      }
+      return parsed;
+    } catch {}
   }
+
+  // 2. Try finding outermost array [ ... ]
+  const firstBracket = trimmed.indexOf('[');
+  const lastBracket = trimmed.lastIndexOf(']');
+  if (firstBracket !== -1 && lastBracket > firstBracket) {
+    try {
+      return JSON.parse(trimmed.slice(firstBracket, lastBracket + 1));
+    } catch {}
+  }
+
+  // 3. Try finding outermost object { ... }
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      const obj = JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
+      if (Array.isArray(obj.slots)) return obj.slots;
+      if (Array.isArray(obj.timetable)) return obj.timetable;
+      return obj;
+    } catch {}
+  }
+
+  throw validationError('AI trả về dữ liệu không đúng định dạng JSON.');
 }
 
 function validateSlots(value) {
   if (!Array.isArray(value)) throw validationError('Thời khóa biểu phải là một mảng JSON.');
-  const slots = value.map((slot, index) => {
-    if (!slot || typeof slot !== 'object') throw validationError(`Ca học thứ ${index + 1} không hợp lệ.`);
-    const day = Number(slot.day);
+  
+  const rawSlots = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const slot = value[index];
+    if (!slot || typeof slot !== 'object') continue;
+    let day = Number(slot.day);
     const title = typeof slot.title === 'string' ? slot.title.trim() : '';
-    const start = typeof slot.start === 'string' ? slot.start : '';
-    const end = typeof slot.end === 'string' ? slot.end : '';
-    if (!Number.isInteger(day) || day < 1 || day > 7) throw validationError(`Ca học thứ ${index + 1} có ngày không hợp lệ (phải từ 1 đến 7).`);
-    if (!title) throw validationError(`Ca học thứ ${index + 1} chưa có tên môn.`);
-    if (!TIME_PATTERN.test(start) || !TIME_PATTERN.test(end)) throw validationError(`Ca học "${title}" có giờ không hợp lệ (cần dạng HH:MM).`);
-    if (start >= end) throw validationError(`Ca học "${title}" có giờ bắt đầu phải trước giờ kết thúc.`);
-    return { day, title, start, end };
-  });
+    let start = typeof slot.start === 'string' ? slot.start.trim() : '';
+    let end = typeof slot.end === 'string' ? slot.end.trim() : '';
 
-  const minutes = value => Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
-  for (let index = 0; index < slots.length; index += 1) {
-    for (let other = index + 1; other < slots.length; other += 1) {
-      if (slots[index].day !== slots[other].day) continue;
-      const overlaps = minutes(slots[index].start) < minutes(slots[other].end)
-        && minutes(slots[other].start) < minutes(slots[index].end);
-      if (overlaps) throw validationError(`Hai ca học trong ngày ${slots[index].day} bị chồng giờ: "${slots[index].title}" và "${slots[other].title}".`);
-    }
+    // Normalize single-digit hour (e.g. "7:15" -> "07:15")
+    if (/^\d:[0-5]\d$/.test(start)) start = '0' + start;
+    if (/^\d:[0-5]\d$/.test(end)) end = '0' + end;
+
+    // Day: 0..7 where 7 is Sunday. Normalize 7 -> 0 for consistency with calendar app
+    if (day === 7) day = 0;
+    if (!Number.isInteger(day) || day < 0 || day > 6) continue;
+    if (!title) continue;
+    if (!TIME_PATTERN.test(start) || !TIME_PATTERN.test(end)) continue;
+    if (start >= end) continue;
+
+    rawSlots.push({ day, title, start, end });
   }
-  return slots;
+
+  if (!rawSlots.length && value.length > 0) {
+    throw validationError('Không tìm thấy ca học có ngày và giờ hợp lệ từ ảnh.');
+  }
+
+  // Sort slots by day then start time
+  const minutes = val => Number(val.slice(0, 2)) * 60 + Number(val.slice(3));
+  const timeFromMin = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
+  rawSlots.sort((a, b) => a.day !== b.day ? a.day - b.day : minutes(a.start) - minutes(b.start));
+
+  // Resolve overlaps gracefully instead of rejecting the entire timetable
+  const cleaned = [];
+  for (const slot of rawSlots) {
+    const prev = cleaned[cleaned.length - 1];
+    if (prev && prev.day === slot.day) {
+      const prevEnd = minutes(prev.end);
+      const slotStart = minutes(slot.start);
+      const slotEnd = minutes(slot.end);
+
+      if (slotStart <= prevEnd) {
+        if (prev.title.toLowerCase() === slot.title.toLowerCase()) {
+          // Same subject consecutive periods -> merge into one block
+          prev.end = timeFromMin(Math.max(prevEnd, slotEnd));
+          continue;
+        } else if (slotStart < prevEnd) {
+          if (slotEnd - prevEnd >= 20) {
+            // Different subjects overlap: adjust start of second slot
+            slot.start = prev.end;
+          } else if (prevEnd - slotStart <= 10) {
+            // Minor overlap: adjust end of first slot
+            prev.end = slot.start;
+          }
+        }
+      }
+    }
+    cleaned.push(slot);
+  }
+
+  return cleaned;
 }
 
 async function callGemini(image, mimeType) {
@@ -70,7 +145,7 @@ async function callGemini(image, mimeType) {
         role: 'user',
         parts: [
           { inlineData: { mimeType, data: image } },
-          { text: 'Đọc ảnh thời khóa biểu này. Trả về duy nhất một JSON array gồm các ca học nhìn thấy, theo đúng schema: [{"day":1,"title":"Toán","start":"07:15","end":"08:00"}]. day là thứ trong tuần từ 1 (Thứ 2) đến 7 (Chủ nhật). Bỏ qua ô trống, ngày nghỉ và thông tin không phải ca học. Giữ nguyên tên môn/hoạt động nhìn thấy trong ảnh. Nếu không đọc chắc được một ca, không tự đoán ca đó.' },
+          { text: 'Đọc ảnh thời khóa biểu này. Trả về duy nhất một JSON array gồm các ca học nhìn thấy, theo đúng schema: [{"day":1,"title":"Toán","start":"07:15","end":"08:00"}]. day là thứ trong tuần từ 1 (Thứ 2) đến 6 (Thứ 7), và 0 hoặc 7 (Chủ nhật). Bỏ qua ô trống, ngày nghỉ và thông tin không phải ca học. Giữ nguyên tên môn/hoạt động nhìn thấy trong ảnh. Nếu không đọc chắc được một ca, không tự đoán ca đó.' },
         ],
       }],
       generationConfig: { temperature: 0, responseMimeType: 'application/json' },
@@ -106,3 +181,4 @@ module.exports = async function handler(req, res) {
 };
 
 module.exports.validateSlots = validateSlots;
+module.exports.parseModelJSON = parseModelJSON;

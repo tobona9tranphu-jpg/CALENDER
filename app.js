@@ -1286,94 +1286,131 @@ const PERIOD_TIMES = {
 
 function parseSubjectAndTeacher(raw) {
   if (!raw) return null;
-  const str = raw.trim().replace(/\s+/g, ' ');
+  const str = String(raw).trim().replace(/[ \t]+/g, ' ');
   if (!str || str.toLowerCase() === 'nghỉ' || str === '-' || str === 'x' || str.length < 2) return null;
 
   let subjectPart = str;
   let teacherPart = '';
 
-  const dashIdx = str.indexOf('-');
-  if (dashIdx > 0) {
+  // Detect teacher / room from: newline, dash, parenthesis, or colon
+  if (str.includes('\n')) {
+    const lines = str.split('\n').map(l => l.trim()).filter(Boolean);
+    subjectPart = lines[0] || '';
+    teacherPart = lines.slice(1).join(' ');
+  } else if (str.includes('-') && str.indexOf('-') > 0) {
+    const dashIdx = str.indexOf('-');
     subjectPart = str.slice(0, dashIdx).trim();
     teacherPart = str.slice(dashIdx + 1).trim();
+  } else if (/\((.*?)\)/.test(str)) {
+    const parenMatch = str.match(/\((.*?)\)/);
+    subjectPart = str.replace(/\(.*?\)/, '').trim();
+    teacherPart = parenMatch ? parenMatch[1].trim() : '';
+  } else if (str.includes(':') && str.indexOf(':') > 0) {
+    const colonIdx = str.indexOf(':');
+    subjectPart = str.slice(0, colonIdx).trim();
+    teacherPart = str.slice(colonIdx + 1).trim();
+  }
+
+  // Clean teacher prefix if already has GV/Thầy/Cô
+  if (teacherPart) {
+    teacherPart = teacherPart.replace(/^gv[\s.:-]*/i, '').trim();
   }
 
   const sLower = subjectPart.toLowerCase();
   let cleanSubject = subjectPart;
-  let subjectGroup = 'Toán';
+  let subjectGroup = subjectPart; // Default to subject itself instead of always 'Toán'!
 
-  if (sLower === 'chào cờ') {
+  const normWords = ' ' + sLower.replace(/[^a-z0-9&àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/g, ' ') + ' ';
+  const has = (...keywords) => keywords.some(k => normWords.includes(' ' + k.toLowerCase() + ' '));
+
+  if (has('chào cờ', 'chao co')) {
     cleanSubject = 'Chào cờ';
     subjectGroup = 'Chào cờ';
-  } else if (sLower.startsWith('shl') || sLower.includes('sinh hoạt')) {
+  } else if (has('sinh hoạt', 'sinh hoạt lớp', 'shl', 'sinh hoat')) {
     cleanSubject = 'Sinh hoạt lớp';
     subjectGroup = 'Sinh hoạt lớp';
-  } else if (sLower.startsWith('hđtn') || sLower.includes('trải nghiệm')) {
+  } else if (has('hđtn', 'trải nghiệm', 'trai nghiem')) {
     cleanSubject = 'HĐ Trải nghiệm';
     subjectGroup = 'Hoạt động trải nghiệm';
-  } else if (sLower.startsWith('cđtoán') || sLower.startsWith('cđ toán')) {
+  } else if (has('cđ toán', 'chuyên đề toán', 'cd toan')) {
     cleanSubject = 'Chuyên đề Toán';
     subjectGroup = 'Toán';
-  } else if (sLower.startsWith('cđanh') || sLower.startsWith('cđ anh')) {
+  } else if (has('cđ anh', 'chuyên đề tiếng anh', 'chuyên đề anh')) {
     cleanSubject = 'Chuyên đề Tiếng Anh';
     subjectGroup = 'Tiếng Anh';
-  } else if (sLower.startsWith('cđvăn') || sLower.startsWith('cđ văn')) {
+  } else if (has('cđ văn', 'chuyên đề ngữ văn', 'chuyên đề văn')) {
     cleanSubject = 'Chuyên đề Ngữ văn';
     subjectGroup = 'Ngữ văn';
-  } else if (sLower.startsWith('cđlý') || sLower.startsWith('cđ lý')) {
+  } else if (has('cđ lý', 'chuyên đề vật lí', 'chuyên đề vật lý', 'chuyên đề lý')) {
     cleanSubject = 'Chuyên đề Vật lí';
     subjectGroup = 'Vật lí';
-  } else if (sLower.startsWith('cđhóa') || sLower.startsWith('cđ hóa')) {
+  } else if (has('cđ hóa', 'chuyên đề hóa học', 'chuyên đề hóa')) {
     cleanSubject = 'Chuyên đề Hóa học';
     subjectGroup = 'Hóa học';
-  } else if (sLower.startsWith('cđsinh') || sLower.startsWith('cđ sinh')) {
+  } else if (has('cđ sinh', 'chuyên đề sinh học', 'chuyên đề sinh')) {
     cleanSubject = 'Chuyên đề Sinh học';
     subjectGroup = 'Sinh học';
-  } else if (sLower.startsWith('cđsử') || sLower.startsWith('cđ sử')) {
+  } else if (has('cđ sử', 'chuyên đề lịch sử', 'chuyên đề sử')) {
     cleanSubject = 'Chuyên đề Lịch sử';
     subjectGroup = 'Lịch sử';
-  } else if (sLower.startsWith('cđđịa') || sLower.startsWith('cđ địa')) {
+  } else if (has('cđ địa', 'chuyên đề địa lí', 'chuyên đề địa lý', 'chuyên đề địa')) {
     cleanSubject = 'Chuyên đề Địa lí';
     subjectGroup = 'Địa lí';
-  } else if (sLower === 'toán' || sLower === 'toan') {
+  } else if (has('toán', 'toan', 'đại số', 'hình học')) {
     cleanSubject = 'Toán';
     subjectGroup = 'Toán';
-  } else if (sLower === 'văn' || sLower === 'ngữ văn' || sLower === 'van') {
+  } else if (has('ngữ văn', 'văn học', 'văn', 'van')) {
     cleanSubject = 'Ngữ văn';
     subjectGroup = 'Ngữ văn';
-  } else if (sLower === 'anh' || sLower === 'tiếng anh' || sLower === 'en') {
+  } else if (has('tiếng anh', 'anh văn', 'english', 'tieng anh', 'anh', 'en')) {
     cleanSubject = 'Tiếng Anh';
     subjectGroup = 'Tiếng Anh';
-  } else if (sLower === 'lý' || sLower === 'vật lí' || sLower === 'vật lý') {
+  } else if (has('vật lí', 'vật lý', 'vat li', 'vat ly', 'lý', 'ly')) {
     cleanSubject = 'Vật lí';
     subjectGroup = 'Vật lí';
-  } else if (sLower === 'hóa' || sLower === 'hóa học') {
+  } else if (has('hóa học', 'hoa hoc', 'hóa', 'hoa')) {
     cleanSubject = 'Hóa học';
     subjectGroup = 'Hóa học';
-  } else if (sLower === 'sinh' || sLower === 'sinh học') {
+  } else if (has('sinh học', 'sinh hoc', 'sinh')) {
     cleanSubject = 'Sinh học';
     subjectGroup = 'Sinh học';
-  } else if (sLower === 'sử' || sLower === 'lịch sử') {
+  } else if (has('lịch sử', 'lich su', 'sử', 'su')) {
     cleanSubject = 'Lịch sử';
     subjectGroup = 'Lịch sử';
-  } else if (sLower === 'địa' || sLower === 'địa lí' || sLower === 'địa lý') {
+  } else if (has('địa lí', 'địa lý', 'dia li', 'dia ly', 'địa', 'dia')) {
     cleanSubject = 'Địa lí';
     subjectGroup = 'Địa lí';
-  } else if (sLower === 'tin' || sLower === 'tin học') {
+  } else if (has('tin học', 'tin hoc', 'tin', 'cntt')) {
     cleanSubject = 'Tin học';
     subjectGroup = 'Tin học';
-  } else if (sLower.includes('gdkt') || sLower.includes('pl') || sLower === 'gdcd') {
+  } else if (has('gdkt', 'kt&pl', 'ktpl', 'gdcd', 'pháp luật')) {
     cleanSubject = 'GDCD / KT&PL';
     subjectGroup = 'GDCD';
-  } else if (sLower === 'qp' || sLower.includes('quốc phòng')) {
+  } else if (has('quốc phòng', 'gdqp', 'qp')) {
     cleanSubject = 'Giáo dục quốc phòng';
     subjectGroup = 'Thể dục / GDQP';
-  } else if (sLower === 'td' || sLower.includes('thể dục')) {
+  } else if (has('thể dục', 'the duc', 'gd thể chất', 'thể chất', 'td')) {
     cleanSubject = 'Thể dục';
     subjectGroup = 'Thể dục / GDQP';
-  } else if (sLower.includes('công nghệ') || sLower === 'cn') {
+  } else if (has('công nghệ', 'cong nghe', 'cn')) {
     cleanSubject = 'Công nghệ';
     subjectGroup = 'Công nghệ';
+  } else if (has('khoa học tự nhiên', 'khtn')) {
+    cleanSubject = 'KHTN';
+    subjectGroup = 'KHTN';
+  } else if (has('âm nhạc', 'am nhac')) {
+    cleanSubject = 'Âm nhạc';
+    subjectGroup = 'Âm nhạc';
+  } else if (has('mĩ thuật', 'mỹ thuật', 'mi thuat')) {
+    cleanSubject = 'Mĩ thuật';
+    subjectGroup = 'Mĩ thuật';
+  } else {
+    // Clean and preserve unrecognized subject name
+    cleanSubject = cleanSubject.trim();
+    if (cleanSubject.length > 0) {
+      cleanSubject = cleanSubject.charAt(0).toUpperCase() + cleanSubject.slice(1);
+    }
+    subjectGroup = cleanSubject || 'Môn học';
   }
 
   const title = teacherPart ? `${cleanSubject} (GV ${teacherPart})` : cleanSubject;
@@ -1430,7 +1467,7 @@ async function handleTimetableFile(file) {
     const ext = file.name.split('.').pop().toLowerCase();
     let slots = [];
 
-    if (ext === 'docx') {
+    if (ext === 'docx' || ext === 'doc') {
       slots = await parseDocxTimetable(file);
     } else if (['png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
       slots = await parseImageTimetable(file);
@@ -1460,16 +1497,27 @@ function extractDocxTables(xmlText) {
     return rowMatches.map(tr => {
       const cellMatches = tr.match(/<w:tc[\s\S]*?<\/w:tc>/g) || [];
       return cellMatches.map(tc => {
+        const pMatches = tc.match(/<w:p[\s\S]*?<\/w:p>/g) || [];
+        if (pMatches.length > 0) {
+          return pMatches.map(p => {
+            const textMatches = p.match(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g) || [];
+            return textMatches.map(t => t.replace(/<[^>]+>/g, '')).join(' ').trim();
+          }).filter(Boolean).join('\n').trim();
+        }
         const textMatches = tc.match(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g) || [];
-        return textMatches.map(t => t.replace(/<[^>]+>/g, '')).join('').trim();
+        return textMatches.map(t => t.replace(/<[^>]+>/g, '')).join(' ').trim();
       });
     });
   });
 }
 
 async function parseDocxTimetable(file) {
+  if (file.name.toLowerCase().endsWith('.doc')) {
+    throw new Error('Tệp Word định dạng cũ (.doc) không thể giải mã trực tiếp trong trình duyệt. Bạn vui lòng mở file và chọn Lưu dưới dạng (Save As) sang đuôi ".docx" hoặc chụp ảnh TKB để nhập nhé!');
+  }
+
   if (typeof JSZip === 'undefined') {
-    throw new Error('Đang tải thư viện xử lý Word, vui lòng kiểm tra kết nối và thử lại.');
+    throw new Error('Đang tải thư viện xử lý Word, vui lòng kiểm tra kết nối mạng và thử lại.');
   }
 
   let arrayBuffer;
@@ -1488,9 +1536,6 @@ async function parseDocxTimetable(file) {
   try {
     zip = await JSZip.loadAsync(arrayBuffer);
   } catch (zErr) {
-    if (file.name.toLowerCase().endsWith('.doc')) {
-      throw new Error('Tệp Word định dạng cũ (.doc) không thể giải mã trực tiếp. Bạn vui lòng mở file và chọn Lưu dưới dạng (Save As) sang đuôi ".docx" hoặc chụp ảnh TKB để nhập nhé!');
-    }
     throw new Error('Không thể mở tệp Word này. Hãy đảm bảo đây là file Word định dạng chuẩn (.docx).');
   }
 
@@ -1514,45 +1559,78 @@ async function parseDocxTimetable(file) {
   for (const rows of tables) {
     if (!rows.length) continue;
 
-    // Analyze header row (row 0)
-    const headerCells = rows[0];
+    // Scan the first 5 rows to detect class columns header
+    let headerRowIdx = -1;
+    let classCols = {};
 
-    // Detect class columns
-    const classCols = {};
-    headerCells.forEach((cellText, colIdx) => {
-      const match = cellText.match(/(\d+[A-Za-z]+\d*)/);
-      if (match) {
-        const className = match[1];
-        classCols[colIdx] = { className, fullLabel: cellText };
-        if (!classMap[className]) {
-          classMap[className] = { label: cellText, slots: [] };
+    for (let r = 0; r < Math.min(rows.length, 5); r++) {
+      const candidateCells = rows[r];
+      const cols = {};
+      candidateCells.forEach((cellText, colIdx) => {
+        const match = cellText.match(/(\d+[A-Za-z]+\d*)/);
+        if (match) {
+          cols[colIdx] = { className: match[1], fullLabel: cellText.trim() };
         }
+      });
+      if (Object.keys(cols).length >= 2) {
+        headerRowIdx = r;
+        classCols = cols;
+        for (const c of Object.values(cols)) {
+          if (!classMap[c.className]) {
+            classMap[c.className] = { label: c.fullLabel, slots: [] };
+          }
+        }
+        break;
       }
-    });
+    }
 
-    if (Object.keys(classCols).length >= 2) {
+    if (Object.keys(classCols).length >= 2 && headerRowIdx >= 0) {
       hasMultiClassTable = true;
       let currentDay = 1;
       let currentPeriod = 1;
+      let isAfternoon = false;
 
-      for (let r = 1; r < rows.length; r++) {
+      for (let r = headerRowIdx + 1; r < rows.length; r++) {
         const cells = rows[r];
         if (!cells.length) continue;
 
-        // Day cell (col 0): Thứ 2..7 or empty
+        const rowText = cells.join(' ').toLowerCase();
+        if (rowText.includes('chiều') || rowText.includes('buổi chiều') || rowText.includes('pm')) {
+          isAfternoon = true;
+        } else if (rowText.includes('sáng') || rowText.includes('buổi sáng') || rowText.includes('am')) {
+          isAfternoon = false;
+        }
+
+        // Day cell (col 0): Thứ 2..7, CN, Chủ nhật
         if (cells[0]) {
-          const dm = cells[0].match(/\d+/);
-          if (dm) {
-            const num = parseInt(dm[0], 10);
-            currentDay = (num >= 2 && num <= 7) ? num - 1 : num;
+          const c0 = cells[0].toLowerCase();
+          if (c0.includes('chủ nhật') || c0.includes('cn') || c0 === 't8' || c0 === '8') {
+            currentDay = 0;
+          } else {
+            const dm = cells[0].match(/\d+/);
+            if (dm) {
+              const num = parseInt(dm[0], 10);
+              currentDay = (num >= 2 && num <= 7) ? num - 1 : (num === 8 ? 0 : num);
+            }
           }
         }
 
         // Period cell (col 1): Tiết 1..5
         if (cells[1]) {
           const pm = cells[1].match(/\d+/);
-          if (pm) currentPeriod = parseInt(pm[0], 10);
+          if (pm) {
+            let pNum = parseInt(pm[0], 10);
+            if (isAfternoon && pNum <= 5) pNum += 5;
+            currentPeriod = pNum;
+          }
         }
+
+        // Explicit time in cells (e.g. 07:30 - 08:15)
+        const timeMatch = cells.slice(0, 3).join(' ').match(/(\d{1,2})[:h](\d{2})\s*[-–—]\s*(\d{1,2})[:h](\d{2})/);
+        const rowTime = timeMatch ? {
+          start: `${String(timeMatch[1]).padStart(2, '0')}:${timeMatch[2]}`,
+          end: `${String(timeMatch[3]).padStart(2, '0')}:${timeMatch[4]}`
+        } : null;
 
         // Collect each class cell
         for (const [colStr, colInfo] of Object.entries(classCols)) {
@@ -1561,7 +1639,7 @@ async function parseDocxTimetable(file) {
             const rawVal = cells[colIdx];
             const parsed = parseSubjectAndTeacher(rawVal);
             if (parsed) {
-              const times = PERIOD_TIMES[currentPeriod] || {
+              const times = rowTime || PERIOD_TIMES[currentPeriod] || {
                 start: `${String(7 + Math.floor(currentPeriod / 2)).padStart(2, '0')}:00`,
                 end: `${String(7 + Math.floor(currentPeriod / 2)).padStart(2, '0')}:45`
               };
@@ -1596,26 +1674,33 @@ async function parseDocxTimetable(file) {
 
     let dayCols = {};
     let periodCol = -1;
+    let headerRowIdx = -1;
 
-    for (let r = 0; r < Math.min(rows.length, 3); r++) {
+    for (let r = 0; r < Math.min(rows.length, 5); r++) {
       const cells = rows[r];
       for (let c = 0; c < cells.length; c++) {
         const text = cells[c].toLowerCase();
-        if (text.includes('thứ 2') || text.includes('hai') || text === 't2' || text === '2') dayCols[c] = 1;
+        if (text.includes('chủ nhật') || text === 'cn' || text === 'cn.' || text === 't8' || text === '8') dayCols[c] = 0;
+        else if (text.includes('thứ 2') || text.includes('hai') || text === 't2' || text === '2') dayCols[c] = 1;
         else if (text.includes('thứ 3') || text.includes('ba') || text === 't3' || text === '3') dayCols[c] = 2;
         else if (text.includes('thứ 4') || text.includes('tư') || text === 't4' || text === '4') dayCols[c] = 3;
         else if (text.includes('thứ 5') || text.includes('năm') || text === 't5' || text === '5') dayCols[c] = 4;
         else if (text.includes('thứ 6') || text.includes('sáu') || text === 't6' || text === '6') dayCols[c] = 5;
         else if (text.includes('thứ 7') || text.includes('bảy') || text === 't7' || text === '7') dayCols[c] = 6;
-        else if (text.includes('tiết')) periodCol = c;
+        else if (text.includes('tiết') || text.includes('period')) periodCol = c;
       }
-      if (Object.keys(dayCols).length >= 3) break;
+      if (Object.keys(dayCols).length >= 3) {
+        headerRowIdx = r;
+        break;
+      }
     }
 
     if (Object.keys(dayCols).length < 2) {
-      const cellCount = rows[0].length;
+      const maxRow = rows.reduce((max, r) => r.length > max.length ? r : max, rows[0] || []);
+      const cellCount = maxRow.length;
       if (cellCount >= 7) {
         dayCols = { 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6 };
+        if (cellCount >= 8) dayCols[7] = 0;
         periodCol = 0;
       } else if (cellCount === 6) {
         dayCols = { 0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6 };
@@ -1623,14 +1708,34 @@ async function parseDocxTimetable(file) {
     }
 
     let currentPeriod = 1;
-    for (let r = 0; r < rows.length; r++) {
+    let isAfternoon = false;
+    const startR = headerRowIdx >= 0 ? headerRowIdx + 1 : 0;
+
+    for (let r = startR; r < rows.length; r++) {
       const cells = rows[r];
       if (!cells.length) continue;
 
+      const rowText = cells.join(' ').toLowerCase();
+      if (rowText.includes('chiều') || rowText.includes('buổi chiều') || rowText.includes('pm')) {
+        isAfternoon = true;
+      } else if (rowText.includes('sáng') || rowText.includes('buổi sáng') || rowText.includes('am')) {
+        isAfternoon = false;
+      }
+
       if (periodCol >= 0 && cells[periodCol]) {
         const pMatch = cells[periodCol].match(/\d+/);
-        if (pMatch) currentPeriod = parseInt(pMatch[0], 10);
+        if (pMatch) {
+          let pNum = parseInt(pMatch[0], 10);
+          if (isAfternoon && pNum <= 5) pNum += 5;
+          currentPeriod = pNum;
+        }
       }
+
+      const timeMatch = cells.slice(0, 3).join(' ').match(/(\d{1,2})[:h](\d{2})\s*[-–—]\s*(\d{1,2})[:h](\d{2})/);
+      const rowTime = timeMatch ? {
+        start: `${String(timeMatch[1]).padStart(2, '0')}:${timeMatch[2]}`,
+        end: `${String(timeMatch[3]).padStart(2, '0')}:${timeMatch[4]}`
+      } : null;
 
       for (const [colStr, dayNum] of Object.entries(dayCols)) {
         const colIdx = parseInt(colStr, 10);
@@ -1638,13 +1743,13 @@ async function parseDocxTimetable(file) {
           const rawCell = cells[colIdx];
           const parsed = parseSubjectAndTeacher(rawCell);
           if (parsed) {
-            const times = PERIOD_TIMES[currentPeriod] || {
+            const times = rowTime || PERIOD_TIMES[currentPeriod] || {
               start: `${String(7 + Math.floor(currentPeriod / 2)).padStart(2, '0')}:00`,
               end: `${String(7 + Math.floor(currentPeriod / 2)).padStart(2, '0')}:45`
             };
             rawSlots.push({
               id: uid('imported'),
-              day: dayNum,
+              day: Number(dayNum),
               period: currentPeriod,
               title: parsed.title,
               subjectGroup: parsed.subjectGroup,
@@ -1704,28 +1809,36 @@ function setupClassPickerUI(classMap) {
 }
 
 async function parseImageTimetable(file) {
-  try {
-    if (!file || !file.type.startsWith('image/')) throw new Error('Vui lòng chọn tệp hình ảnh PNG, JPG hoặc WebP.');
-    const buffer = await file.arrayBuffer();
-    const image = new Uint8Array(buffer);
-    let binary = '';
-    const chunkSize = 0x8000;
-    for (let offset = 0; offset < image.length; offset += chunkSize) {
-      binary += String.fromCharCode(...image.subarray(offset, offset + chunkSize));
-    }
-    const response = await fetch('/api/parse-timetable', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: btoa(binary), mimeType: file.type })
-    });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.error || 'Không đọc được ảnh này.');
-    if (!Array.isArray(result.slots)) throw new Error('AI không trả về thời khóa biểu hợp lệ.');
-    return result.slots.map(slot => ({ ...slot, id: uid('img-slot'), type: 'school' }));
-  } catch (error) {
-    if (error.message?.startsWith('Không đọc được') || error.message?.startsWith('Vui lòng')) throw error;
-    throw new Error('Không đọc được ảnh này, thử ảnh rõ nét hơn hoặc nhập tay.');
+  if (!file || !file.type.startsWith('image/')) throw new Error('Vui lòng chọn tệp hình ảnh PNG, JPG hoặc WebP.');
+  const buffer = await file.arrayBuffer();
+  const image = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < image.length; offset += chunkSize) {
+    binary += String.fromCharCode(...image.subarray(offset, offset + chunkSize));
   }
+  const response = await fetch('/api/parse-timetable', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image: btoa(binary), mimeType: file.type })
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || 'Không đọc được ảnh này.');
+  if (!Array.isArray(result.slots)) throw new Error('AI không trả về thời khóa biểu hợp lệ.');
+  return result.slots.map(slot => {
+    const parsed = parseSubjectAndTeacher(slot.title);
+    let day = Number(slot.day);
+    if (day === 7) day = 0; // Normalize Sunday 7 -> 0
+    return {
+      id: uid('img-slot'),
+      day,
+      title: parsed ? parsed.title : slot.title,
+      subjectGroup: parsed ? parsed.subjectGroup : (slot.title || 'Môn học'),
+      start: slot.start,
+      end: slot.end,
+      type: 'school'
+    };
+  });
 }
 
 function parseTextTimetable(text) {
@@ -1737,7 +1850,8 @@ function parseTextTimetable(text) {
     const l = line.trim();
     if (!l) continue;
     const lower = l.toLowerCase();
-    if (lower.includes('thứ 2') || lower.startsWith('t2')) currentDay = 1;
+    if (lower.includes('chủ nhật') || lower.includes('cn') || lower.startsWith('t8')) currentDay = 0;
+    else if (lower.includes('thứ 2') || lower.startsWith('t2')) currentDay = 1;
     else if (lower.includes('thứ 3') || lower.startsWith('t3')) currentDay = 2;
     else if (lower.includes('thứ 4') || lower.startsWith('t4')) currentDay = 3;
     else if (lower.includes('thứ 5') || lower.startsWith('t5')) currentDay = 4;
@@ -1803,7 +1917,7 @@ function applyImportedTimetable() {
     currentUser.fixedSchedules.push({
       id: uid('fixed-school'),
       title: slot.title + (slot.periodLabel ? ` (${slot.periodLabel})` : ''),
-      day: slot.day,
+      day: Number(slot.day) === 7 ? 0 : Number(slot.day),
       start: slot.start,
       end: slot.end,
       type: 'school',
