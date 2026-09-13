@@ -3,12 +3,29 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "start": "node server.js",
+    "start": "node src/server/expressServer.js",
+    "dev": "nodemon src/server/expressServer.js",
+    "test": "jest",
     "seed:demo": "node scripts/seed-demo-account.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
     "jsonwebtoken": "^9.0.3",
-    "pg": "^8.23.0"
+    "pg": "^8.23.0",
+    "date-fns": "^3.6.0",
+    "date-fns-tz": "^3.0.0",
+    "rrule": "^2.7.2",
+    "dompurify": "^3.0.7"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^6.3.4",
+    "@testing-library/dom": "^9.3.4"
+  },
+  "overrides": {
+    "qs": "^6.16.0"
   }
 }

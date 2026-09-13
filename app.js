@@ -1,20 +1,73 @@
 const $ = (selector, scope = document) => scope.querySelector(selector);
 const $$ = (selector, scope = document) => [...scope.querySelectorAll(selector)];
 const API = '/api';
-const TOKEN_KEY = 'TB-auth-token';
+// NOTE: TB-auth-token is an HttpOnly cookie managed by the server.
+// Client-side JS must NEVER read, write, or store the auth token.
 const STORAGE_LOCAL_ACCOUNTS = 'TB-demo-accounts-v2';
-const STORAGE_LOCAL_CURRENT = 'TB-demo-current-user-v2';
+const STORAGE_LOCAL_CURRENT  = 'TB-demo-current-user-v2';
+// Offline/demo mode marker — stores only the local- session ID, never a real JWT.
+const STORAGE_OFFLINE_SESSION = 'TB-offline-session-v1';
 
-function getToken() { return localStorage.getItem(TOKEN_KEY); }
-function setToken(t) { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY); }
+/** Returns the offline local session ID (e.g. "local-user-xxx"), or null. */
+function getOfflineSession() { return localStorage.getItem(STORAGE_OFFLINE_SESSION); }
+/** Persists the offline session ID. Pass null to clear. */
+function setOfflineSession(id) {
+  if (id) localStorage.setItem(STORAGE_OFFLINE_SESSION, id);
+  else localStorage.removeItem(STORAGE_OFFLINE_SESSION);
+}
+/** True when running in offline/demo mode (not authenticated against the server). */
+function isOfflineMode() { const s = getOfflineSession(); return !!s && s.startsWith('local-'); }
+
+const DateUtil = (typeof AppDate !== 'undefined')
+  ? AppDate
+  : (typeof require === 'function' ? (function() { try { return require('./src/utils/date'); } catch { return null; } })() : null);
+
+const RecurrenceEngineUtil = (typeof RecurrenceEngine !== 'undefined')
+  ? RecurrenceEngine
+  : (typeof require === 'function' ? (function() { try { return require('./src/recurrence/recurrence-engine'); } catch { return null; } })() : null);
+
+const DataIntegrityUtil = (typeof DataIntegrity !== 'undefined')
+  ? DataIntegrity
+  : (typeof require === 'function' ? (function() { try { return require('./src/recurrence/data-integrity'); } catch { return null; } })() : null);
+
+const TodayEngineUtil = (typeof TodayEngine !== 'undefined')
+  ? TodayEngine
+  : (typeof require === 'function' ? (function() { try { return require('./src/today/today-engine'); } catch { return null; } })() : null);
+
+const QuickCaptureUtil = (typeof QuickCapture !== 'undefined')
+  ? QuickCapture
+  : (typeof require === 'function' ? (function() { try { return require('./src/today/quick-capture'); } catch { return null; } })() : null);
+
+const InboxServiceUtil = (typeof InboxService !== 'undefined')
+  ? InboxService
+  : (typeof require === 'function' ? (function() { try { return require('./src/today/inbox-service'); } catch { return null; } })() : null);
+
+const AIFoundationUtil = (typeof AIFoundation !== 'undefined')
+  ? AIFoundation
+  : (typeof require === 'function' ? (function() { try { return require('./src/ai'); } catch { return null; } })() : null);
+
+const ClientAIAdapterUtil = (typeof AIProvider !== 'undefined' && AIProvider.ClientAIAdapter)
+  ? AIProvider.ClientAIAdapter
+  : (AIFoundationUtil && AIFoundationUtil.ClientAIAdapter ? AIFoundationUtil.ClientAIAdapter : null);
 
 function getLocalAccounts() {
   try {
-    const list = JSON.parse(localStorage.getItem(STORAGE_LOCAL_ACCOUNTS) || '[]');
-    if (!list.length) {
+    let list = null;
+    if (DataIntegrityUtil && DataIntegrityUtil.safeLoadStorage) {
+      list = DataIntegrityUtil.safeLoadStorage(STORAGE_LOCAL_ACCOUNTS, localStorage, null);
+    } else {
+      list = JSON.parse(localStorage.getItem(STORAGE_LOCAL_ACCOUNTS) || '[]');
+    }
+    if (!list || !Array.isArray(list) || !list.length) {
       const seed = seedAccount();
       localStorage.setItem(STORAGE_LOCAL_ACCOUNTS, JSON.stringify([seed]));
       return [seed];
+    }
+    if (DataIntegrityUtil && DataIntegrityUtil.processUserDataPipeline) {
+      list = list.map(acc => {
+        const res = DataIntegrityUtil.processUserDataPipeline(acc);
+        return res ? res.data : acc;
+      });
     }
     return list;
   } catch {
@@ -28,6 +81,10 @@ function setLocalAccounts(accounts) {
 
 function saveLocalUser(user) {
   if (!user || !user.id) return;
+  if (DataIntegrityUtil && DataIntegrityUtil.processUserDataPipeline) {
+    const res = DataIntegrityUtil.processUserDataPipeline(user);
+    if (res && res.data) user = res.data;
+  }
   const list = getLocalAccounts();
   const idx = list.findIndex(a => a.id === user.id);
   if (idx >= 0) list[idx] = clone(user);
@@ -39,9 +96,13 @@ async function api(method, path, body = null) {
   if (window.location.protocol === 'file:') {
     throw new Error('OFFLINE_MODE');
   }
-  const opts = { method, headers: { 'Content-Type': 'application/json' } };
-  const token = getToken();
-  if (token && !token.startsWith('local-')) opts.headers['Authorization'] = 'Bearer ' + token;
+  // Auth is provided automatically via the HttpOnly TB-auth-token cookie.
+  // Never read, construct, or attach the token manually.
+  const opts = {
+    method,
+    credentials: 'include',            // send the HttpOnly cookie on every request
+    headers: { 'Content-Type': 'application/json' },
+  };
   if (body) opts.body = JSON.stringify(body);
 
   let res;
@@ -63,17 +124,60 @@ async function api(method, path, body = null) {
     throw new Error('OFFLINE_MODE');
   }
 
+  if (res.status === 401) throw new Error('SESSION_EXPIRED');
+  if (res.status === 403) throw new Error('FORBIDDEN');
   if (!res.ok) throw new Error(data.error || 'Lỗi server');
   return data;
 }
-function getToday() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+
+// ── Notification Engine Foundation (P0.4) ──────────────────────────────────
+let notificationService = null;
+let notificationStore = null;
+let notificationScheduler = null;
+
+try {
+  const NotifServiceClass = (typeof NotificationService !== 'undefined' && NotificationService.NotificationService)
+    ? NotificationService.NotificationService
+    : (typeof AppNotification !== 'undefined' ? AppNotification.NotificationService : null);
+
+  const NotifStoreClass = (typeof NotificationStore !== 'undefined' && NotificationStore.NotificationStore)
+    ? NotificationStore.NotificationStore
+    : (typeof AppNotification !== 'undefined' ? AppNotification.NotificationStore : null);
+
+  const ToastUIClass = (typeof ToastUI !== 'undefined' && ToastUI.ToastUI)
+    ? ToastUI.ToastUI
+    : (typeof AppNotification !== 'undefined' ? AppNotification.ToastUI : null);
+
+  const NotifSchedulerClass = (typeof NotificationScheduler !== 'undefined' && NotificationScheduler.NotificationScheduler)
+    ? NotificationScheduler.NotificationScheduler
+    : (typeof AppNotification !== 'undefined' ? AppNotification.NotificationScheduler : null);
+
+  if (NotifStoreClass) {
+    notificationStore = new NotifStoreClass();
+  }
+  const toastUIInstance = ToastUIClass ? new ToastUIClass({ container: '#toastContainer' }) : null;
+
+  if (NotifServiceClass) {
+    notificationService = new NotifServiceClass({
+      store: notificationStore,
+      toast: toastUIInstance
+    });
+    notificationScheduler = notificationService.scheduler;
+  }
+} catch (err) {
+  console.warn('Notification service initialization fallback:', err);
+}
+
+function getToday() {
+  return DateUtil ? DateUtil.getTodayAppDate() : (new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date()));
+}
 let TODAY = getToday();
 let scheduleViewDate = TODAY;
-let calendarMonth = new Date().getMonth();
-let calendarYear = new Date().getFullYear();
+let calendarMonth = Number(TODAY.split('-')[1]) - 1;
+let calendarYear = Number(TODAY.split('-')[0]);
 const DEMO_EMAIL = 'minhanh@tb.demo';
 const DEMO_PASSWORD = 'demo123';
-const dayNames = ['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy'];
+const dayNames = (DateUtil && DateUtil.DAY_NAMES_VI) || ['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy'];
 
 const EXAM_COMBINATIONS = {
   'A00': ['Toán', 'Vật lí', 'Hóa học'],
@@ -115,23 +219,39 @@ let pendingTimerCompletion = null;
 const uid = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const escapeHTML = (value = '') => String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
-const dateFrom = (value) => new Date(`${value}T12:00:00+07:00`);
-const minFromTime = (value) => { const [hours, minutes] = value.split(':').map(Number); return hours * 60 + minutes; };
-const timeFromMin = (value) => `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
-const formatMinutes = (value) => `${Math.floor(value / 60)}h ${String(value % 60).padStart(2, '0')}m`;
-const formatVietnameseDate = (d) => { const days = ['CHỦ NHẬT','THỨ HAI','THỨ BA','THỨ TƯ','THỨ NĂM','THỨ SÁU','THỨ BẢY']; return days[d.getDay()] + ', ' + d.getDate() + ' THÁNG ' + (d.getMonth()+1); };
-const formatShortDate = (value) => new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit' }).format(dateFrom(value));
+const isSafeImageUrl = (url = '') => {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (/^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,[a-z0-9+/=]+$/i.test(trimmed)) return true;
+  try {
+    const parsed = new URL(trimmed, window.location.href);
+    return ['http:', 'https:'].includes(parsed.protocol);
+  } catch (e) {
+    return false;
+  }
+};
+const dateFrom = (value) => {
+  if (DateUtil) {
+    const parsed = DateUtil.parseAppDate(value);
+    return parsed ? DateUtil.startOfAppDay(parsed) : new Date(NaN);
+  }
+  return new Date(value);
+};
+const minFromTime = (value) => DateUtil ? DateUtil.minFromTime(value) : (() => { const [h, m] = (value || '0:0').split(':').map(Number); return (h||0) * 60 + (m||0); })();
+const timeFromMin = (value) => DateUtil ? DateUtil.timeFromMin(value) : `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
+const formatMinutes = (value) => DateUtil ? DateUtil.formatMinutes(value) : `${Math.floor(value / 60)}h ${String(value % 60).padStart(2, '0')}m`;
+const formatVietnameseDate = (d) => DateUtil ? DateUtil.formatVietnameseDate(d) : String(d);
+const formatShortDate = (value) => DateUtil ? DateUtil.formatShortDate(value) : String(value);
 
 function normalizeDateInput(value) {
   if (!value) return null;
-  const parsed = new Date(`${value}T12:00:00+07:00`);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed;
+  return DateUtil ? DateUtil.parseAppDate(value) : value;
 }
 function calculateDaysUntil(dateValue) {
-  const parsed = normalizeDateInput(dateValue);
+  if (!DateUtil) return null;
+  const parsed = DateUtil.parseAppDate(dateValue);
   if (!parsed) return null;
-  return Math.round((parsed - dateFrom(TODAY)) / 86400000);
+  return DateUtil.diffAppCalendarDays(parsed, TODAY);
 }
 function getReviewIntervalByUnderstanding(understanding) {
   const mapping = { 1: 1, 2: 2, 3: 3, 4: 7, 5: 14 };
@@ -142,9 +262,7 @@ function scheduleReviewForTopic(topicId, understanding, options = {}) {
   if (!topic) return null;
   const interval = getReviewIntervalByUnderstanding(understanding);
   const days = Number(options.days ?? interval);
-  const dueDate = new Date(`${TODAY}T12:00:00+07:00`);
-  dueDate.setDate(dueDate.getDate() + days);
-  const due = dueDate.toISOString().slice(0, 10);
+  const due = DateUtil ? DateUtil.addAppDays(TODAY, days) : TODAY;
   currentUser.reviewSchedules = (currentUser.reviewSchedules || []).filter(review => review.topicId !== topicId || review.status !== 'scheduled');
   currentUser.reviewSchedules.push({
     id: uid('review'),
@@ -157,7 +275,9 @@ function scheduleReviewForTopic(topicId, understanding, options = {}) {
   return { topic, due, interval: days };
 }
 
-function relDate(offset) { const d = new Date(); d.setDate(d.getDate() + offset); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+function relDate(offset) {
+  return DateUtil ? DateUtil.addAppDays(TODAY, offset) : TODAY;
+}
 
 function seedAccount() {
   return {
@@ -185,10 +305,12 @@ function seedAccount() {
       ] },
     ],
     tasks: [
-      { id: 'task-integral', subjectId: 'math', topicId: 'integral', title: 'Làm 20 bài vận dụng Tích phân', deadline: relDate(0), minutes: 45, priority: 5, status: 'open', createdAt: relDate(-3) },
-      { id: 'task-dp', subjectId: 'informatics', topicId: 'dp', title: 'Hoàn thiện bài Dynamic Programming', deadline: relDate(1), minutes: 60, priority: 4, status: 'open', createdAt: relDate(-2) },
-      { id: 'task-listening', subjectId: 'ielts', topicId: 'listening', title: 'IELTS Listening · Test 3', deadline: relDate(2), minutes: 40, priority: 3, status: 'open', createdAt: relDate(-1) },
-      { id: 'task-functions', subjectId: 'math', topicId: 'functions', title: 'Tóm tắt công thức hàm số', deadline: relDate(-1), minutes: 25, priority: 2, status: 'done', createdAt: relDate(-4) },
+      { id: 'task-integral', subjectId: 'math', topicId: 'integral', title: 'Làm 20 bài vận dụng Tích phân', deadline: relDate(0), scheduledDate: relDate(0), minutes: 45, priority: 5, status: 'open', isInbox: false, createdAt: relDate(-3) },
+      { id: 'task-dp', subjectId: 'informatics', topicId: 'dp', title: 'Hoàn thiện bài Dynamic Programming', deadline: relDate(1), scheduledDate: relDate(1), minutes: 60, priority: 4, status: 'open', isInbox: false, createdAt: relDate(-2) },
+      { id: 'task-listening', subjectId: 'ielts', topicId: 'listening', title: 'IELTS Listening · Test 3', deadline: relDate(2), scheduledDate: relDate(2), minutes: 40, priority: 3, status: 'open', isInbox: false, createdAt: relDate(-1) },
+      { id: 'task-functions', subjectId: 'math', topicId: 'functions', title: 'Tóm tắt công thức hàm số', deadline: relDate(-1), scheduledDate: relDate(-1), minutes: 25, priority: 2, status: 'done', isInbox: false, createdAt: relDate(-4) },
+      { id: 'task-inbox-1', subjectId: 'math', topicId: 'integral', title: 'Luyện 10 câu trắc nghiệm Tích phân vận dụng cao', deadline: null, scheduledDate: null, minutes: 30, priority: 4, status: 'open', isInbox: true, createdAt: relDate(-1) },
+      { id: 'task-inbox-2', subjectId: 'ielts', topicId: 'writing', title: 'Đọc bài mẫu Writing Task 2 band 8.0', deadline: null, scheduledDate: null, minutes: 45, priority: 3, status: 'open', isInbox: true, createdAt: relDate(-2) },
     ],
     fixedSchedules: [
       { id: 'fixed-school', title: 'Học trên trường', day: 4, start: '07:00', end: '11:30', type: 'school' },
@@ -267,12 +389,12 @@ function persist() {
   // Always persist locally as primary/backup storage
   saveLocalUser(currentUser);
 
-  // Sync to server if token available
+  // Sync to server when in server mode (cookie auth, not offline/demo mode).
+  // credentials:'include' in api() ensures the HttpOnly cookie is sent automatically.
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
-    const token = getToken();
-    if (!token || token.startsWith('local-')) return;
-    api('PUT', '/user', currentUser).catch(err => {
+    if (isOfflineMode()) return; // skip server sync in demo/offline mode
+    api('PUT', '/user', currentUser).catch(() => {
       // Ignored: local copy is already saved
     });
   }, 500);
@@ -317,17 +439,24 @@ function priorityLabel(score) {
   if (score >= 40) return ['Nên làm', 'medium'];
   return ['Bình thường', 'regular'];
 }
-function deadlineText(value) { const difference = Math.round((dateFrom(value) - dateFrom(TODAY)) / 86400000); if (difference < 0) return `Quá hạn ${Math.abs(difference)} ngày`; if (difference === 0) return 'Hạn chót hôm nay'; if (difference === 1) return 'Hạn chót ngày mai'; return `Hạn chót ${formatShortDate(value)}`; }
+function deadlineText(value) {
+  if (DateUtil) return DateUtil.formatDeadlineText(value, TODAY);
+  const difference = Math.round((dateFrom(value) - dateFrom(TODAY)) / 86400000);
+  if (difference < 0) return `Quá hạn ${Math.abs(difference)} ngày`;
+  if (difference === 0) return 'Hạn chót hôm nay';
+  if (difference === 1) return 'Hạn chót ngày mai';
+  return `Hạn chót ${formatShortDate(value)}`;
+}
 function getPriorityScoreBreakdown(task) {
   const topic = getTopic(task.topicId);
   const mastery = Number(topic?.mastery ?? 50);
   const dateValue = task.deadline || TODAY;
-  const days = Math.round((dateFrom(dateValue) - dateFrom(TODAY)) / 86400000);
+  const days = DateUtil ? DateUtil.diffAppCalendarDays(dateValue, TODAY) : Math.round((dateFrom(dateValue) - dateFrom(TODAY)) / 86400000);
   const closestExam = (currentUser.examMilestones || [])
-    .filter(item => dateFrom(item.date) >= dateFrom(TODAY))
+    .filter(item => (DateUtil ? DateUtil.diffAppCalendarDays(item.date, TODAY) >= 0 : dateFrom(item.date) >= dateFrom(TODAY)))
     .sort((a, b) => a.date.localeCompare(b.date))[0];
-  const examDays = closestExam ? Math.round((dateFrom(closestExam.date) - dateFrom(TODAY)) / 86400000) : 999;
-  const reviewDue = (currentUser.reviewSchedules || []).some(item => item.topicId === task.topicId && item.status === 'scheduled' && dateFrom(item.due) <= dateFrom(TODAY));
+  const examDays = closestExam ? (DateUtil ? DateUtil.diffAppCalendarDays(closestExam.date, TODAY) : Math.round((dateFrom(closestExam.date) - dateFrom(TODAY)) / 86400000)) : 999;
+  const reviewDue = (currentUser.reviewSchedules || []).some(item => item.topicId === task.topicId && item.status === 'scheduled' && (DateUtil ? DateUtil.diffAppCalendarDays(item.due, TODAY) <= 0 : dateFrom(item.due) <= dateFrom(TODAY)));
   const missedSessions = (currentUser.sessions || []).filter(session => session.topicId === task.topicId && session.status === 'missed').length;
 
   const deadlineUrgency = Math.max(0, 30 - Math.max(days, 0) * 6) + (days <= 0 ? 20 : 0);
@@ -390,10 +519,22 @@ function initials() { return currentUser.profile.name.trim().slice(0, 1).toUpper
 function createPlan(forDate = null) {
   const availability = currentUser.availability;
   const viewDate = forDate || TODAY;
-  const todayDay = new Date(viewDate + 'T12:00:00+07:00').getDay();
+  const todayDay = DateUtil ? DateUtil.getAppDayOfWeek(viewDate) : 0;
   const isAvailableDay = availability.days.includes(todayDay);
-  const fixed = currentUser.fixedSchedules.filter(event => Number(event.day) === todayDay).sort((a, b) => minFromTime(a.start) - minFromTime(b.start));
-  const selected = isAvailableDay ? openTasks().slice(0, 3) : [];
+
+  let fixed = [];
+  if (RecurrenceEngineUtil && RecurrenceEngineUtil.expandOccurrences) {
+    for (const event of (currentUser.fixedSchedules || [])) {
+      const occs = RecurrenceEngineUtil.expandOccurrences(event, viewDate, viewDate);
+      fixed.push(...occs);
+    }
+  } else {
+    fixed = (currentUser.fixedSchedules || []).filter(event => Number(event.day) === todayDay);
+  }
+  fixed.sort((a, b) => minFromTime(a.start) - minFromTime(b.start));
+
+  const candidateTasks = openTasks().filter(t => !InboxServiceUtil || !InboxServiceUtil.isInboxItem(t));
+  const selected = isAvailableDay ? candidateTasks.slice(0, 3) : [];
   let cursor = minFromTime(availability.start);
   const end = minFromTime(availability.end);
   const plan = [];
@@ -425,26 +566,18 @@ function derivedInsights() {
 }
 
 function renderCalendar() {
-  const now = new Date();
   const year = calendarYear; const month = calendarMonth;
-  const firstDay = new Date(year, month, 1).getDay();
-  const startOffset = firstDay === 0 ? 6 : firstDay - 1;
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const daysInPrev = new Date(year, month, 0).getDate();
-  const cells = [];
-  for (let i = startOffset - 1; i >= 0; i--) cells.push({ day: daysInPrev - i, muted: true });
-  for (let i = 1; i <= daysInMonth; i++) cells.push({ day: i, muted: false, isToday: i === now.getDate() && month === now.getMonth() && year === now.getFullYear() });
-  while (cells.length < 42) cells.push({ day: cells.length - startOffset - daysInMonth + 1, muted: true });
-  const monthNames = ['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
+  const cells = DateUtil ? DateUtil.generateCalendarGrid(year, month, TODAY) : [];
+  const monthNames = (DateUtil && DateUtil.MONTH_NAMES_VI) || ['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6','Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'];
   const calTitle = $('.mini-calendar-head h2');
   if (calTitle) calTitle.textContent = monthNames[month] + ', ' + year;
   $('#calendarDates').innerHTML = cells.map(c => `<span class="${c.muted ? 'muted' : ''} ${c.isToday ? 'today-date' : ''}">${c.day}</span>`).join('');
 }
 function renderHeader() {
   const name = escapeHTML(currentUser.profile.name);
-  $('#headerDate').textContent = activePage === 'home' ? formatVietnameseDate(new Date()) : ({ schedule: 'SMART SCHEDULE', subjects: 'SUBJECTS & TOPICS', progress: 'LEARNING PROGRESS', tasks: 'LEARNING TASKS', insights: 'STUDY INSIGHTS', settings: 'YOUR SPACE' }[activePage] || 'TB');
-  const titles = { home: `Chào ${name} <span>✦</span>`, schedule: 'Kế hoạch học', subjects: 'Các môn học', progress: 'Tiến độ học', tasks: 'Nhiệm vụ', insights: 'Góc nhìn học tập', settings: 'Cài đặt' };
-  $('#pageTitle').innerHTML = titles[activePage];
+  $('#headerDate').textContent = activePage === 'home' ? (DateUtil ? DateUtil.formatVietnameseDate(TODAY) : formatVietnameseDate(new Date())) : ({ inbox: 'UNSCHEDULED INBOX', schedule: 'SMART SCHEDULE', subjects: 'SUBJECTS & TOPICS', progress: 'LEARNING PROGRESS', tasks: 'LEARNING TASKS', insights: 'STUDY INSIGHTS', settings: 'YOUR SPACE' }[activePage] || 'TB');
+  const titles = { home: `Chào ${name} <span>✦</span>`, inbox: 'Hộp thư việc cần làm', schedule: 'Kế hoạch học', subjects: 'Các môn học', progress: 'Tiến độ học', tasks: 'Nhiệm vụ', insights: 'Góc nhìn học tập', settings: 'Cài đặt' };
+  $('#pageTitle').innerHTML = titles[activePage] || 'Tổng quan';
   $('#sidebarName').textContent = currentUser.profile.name;
   $('#sidebarGrade').textContent = currentUser.profile.grade || 'Hồ sơ học mới';
   ['#avatarInitial', '#headerInitial', '#accountModalInitial'].forEach(selector => { const el = $(selector); if (el) el.textContent = initials(); });
@@ -452,40 +585,248 @@ function renderHeader() {
   $('#accountModalEmail').textContent = currentUser.email;
 }
 function renderToday() {
-  const tasks = openTasks(); const plan = createPlan(); const completedToday = currentUser.sessions.filter(session => session.date === TODAY && session.status === 'complete');
-  const totalMinutes = plan.plan.reduce((sum, task) => sum + Number(task.minutes), 0);
-  const progress = currentUser.tasks.length ? Math.round((currentUser.tasks.filter(task => task.status === 'done').length / currentUser.tasks.length) * 100) : 0;
-  const criticalCount = tasks.filter(task => calculatePriorityScore(task) >= 80).length;
-  $('#todayDescription').innerHTML = tasks.length ? `Bạn có <strong>${formatMinutes(totalMinutes)}</strong> cho ${plan.plan.length} phiên được TB ưu tiên hôm nay.` : 'Bạn chưa có nhiệm vụ mở. Hãy thêm một nhiệm vụ để TB tạo lịch phù hợp.';
-  $('#todayPoints').innerHTML = `<div><span class="point amber"></span><strong>${String(plan.plan.length).padStart(2, '0')}</strong><small>phiên học</small></div><div><span class="point purple"></span><strong>${String(criticalCount).padStart(2, '0')}</strong><small>cảnh báo khẩn cấp</small></div><div><span class="point green"></span><strong>${progress}%</strong><small>đã hoàn thành</small></div>`;
-  const focus = plan.plan[0] || tasks[0];
-  if (!focus) { $('#focusSubject').textContent = 'Kế hoạch trống'; $('#focusTitle').textContent = 'Thêm nhiệm vụ đầu tiên'; $('#focusDuration').textContent = ''; $('#nextTime').textContent = 'SẴN SÀNG'; $('#focusReason').lastChild.textContent = 'TB sẽ giải thích lý do ưu tiên ngay khi có dữ liệu.'; $('#startStudy').disabled = true; return; }
-  const subject = getSubject(focus.subjectId); const topic = getTopic(focus.topicId); const style = appearance(subject);
-  $('#focusOrb').className = `subject-orb ${style.orb}`; $('#focusOrb').innerHTML = style.icon;
-  $('#focusSubject').textContent = subject.name; $('#focusTitle').textContent = focus.title; $('#focusDuration').textContent = `${focus.minutes} phút`; $('#nextTime').textContent = focus.start ? `BẮT ĐẦU LÚC ${focus.start}` : 'ƯU TIÊN NGAY';
-  const focusMeta = taskPriorityMeta(focus);
-  $('#focusReason').innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0-3.6 10.8c.75.58 1.1 1.2 1.1 2.2h5c0-1 .35-1.62 1.1-2.2A6 6 0 0 0 12 3ZM9.5 20h5M10 17h4"/></svg>${focusMeta.level}: ${describePriorityReason(focus)}.`;
-  $('#startStudy').disabled = false; $('#startStudy').dataset.taskId = focus.id;
-  const priorityRows = tasks.slice(0, 3); $('#priorityTasks').innerHTML = priorityRows.length ? priorityRows.map(taskHTML).join('') : emptyHTML('Không còn nhiệm vụ mở. Một ngày nhẹ nhàng cũng là tiến độ.');
+  if (!currentUser) return;
+  const now = DateUtil ? DateUtil.getNowVietnam() : new Date();
+  const userName = (currentUser.profile && currentUser.profile.name) ? currentUser.profile.name : 'bạn';
+
+  // 1. Header Greeting & Date
+  const greeting = TodayEngineUtil ? TodayEngineUtil.getTimeGreeting(now, userName) : `Chào ${escapeHTML(userName)} ✦`;
+  const greetingEl = $('#todayGreeting');
+  if (greetingEl) greetingEl.textContent = greeting;
+
+  const dateHeaderEl = $('#todayDateHeader');
+  if (dateHeaderEl) {
+    dateHeaderEl.textContent = DateUtil ? DateUtil.formatVietnameseDate(TODAY) : TODAY;
+  }
+
+  // Calculate plan & fixed events today
+  const plan = createPlan(TODAY);
+  const fixed = plan.fixed || [];
+  const scheduledTasks = plan.plan || [];
+  const scheduledOpenTasks = openTasks().filter(t => !InboxServiceUtil || !InboxServiceUtil.isInboxItem(t));
+  const completedToday = (currentUser.sessions || []).filter(session => session.date === TODAY && session.status === 'complete');
+
+  // Next Event
+  const nextEvent = TodayEngineUtil ? TodayEngineUtil.calculateNextEvent(now, fixed, scheduledTasks) : null;
+  const nextCard = $('#nextEventCard');
+  if (nextCard) {
+    if (nextEvent) {
+      nextCard.classList.remove('clear-state');
+      const badgeEl = $('#nextEventBadge');
+      if (badgeEl) badgeEl.textContent = nextEvent.status === 'active' ? 'ĐANG DIỄN RA' : 'SẮP TỚI';
+      const titleEl = $('#nextEventTitle');
+      if (titleEl) titleEl.textContent = nextEvent.title;
+      const timingEl = $('#nextEventTiming');
+      if (timingEl) timingEl.textContent = `${nextEvent.start} – ${nextEvent.end}`;
+      const countEl = $('#nextEventCountdown');
+      if (countEl) countEl.textContent = nextEvent.status === 'active' ? `${nextEvent.minutesRemaining}m` : `${nextEvent.minutesUntil}m`;
+      const countLabelEl = $('#nextEventCountdownLabel');
+      if (countLabelEl) countLabelEl.textContent = nextEvent.status === 'active' ? 'kết thúc' : 'bắt đầu';
+      const dotEl = $('#nextEventDot');
+      if (dotEl) dotEl.style.display = nextEvent.status === 'active' ? 'inline-block' : 'none';
+    } else {
+      nextCard.classList.add('clear-state');
+      const badgeEl = $('#nextEventBadge');
+      if (badgeEl) badgeEl.textContent = 'LỊCH TRÌNH RẢNH';
+      const titleEl = $('#nextEventTitle');
+      if (titleEl) titleEl.textContent = 'Không còn sự kiện nào trong ngày';
+      const timingEl = $('#nextEventTiming');
+      if (timingEl) timingEl.textContent = 'Bạn có thể tự do học hoặc nghỉ ngơi';
+      const countEl = $('#nextEventCountdown');
+      if (countEl) countEl.textContent = '✦';
+      const countLabelEl = $('#nextEventCountdownLabel');
+      if (countLabelEl) countLabelEl.textContent = 'Thảnh thơi';
+      const dotEl = $('#nextEventDot');
+      if (dotEl) dotEl.style.display = 'none';
+    }
+  }
+
+  // Free Time
+  const freeMinutes = TodayEngineUtil
+    ? TodayEngineUtil.calculateFreeTime(currentUser.availability, fixed, scheduledTasks, now)
+    : 120;
+  const freeHours = Math.floor(freeMinutes / 60);
+  const freeRemMins = freeMinutes % 60;
+  const freeTimeEl = $('#todayFreeTime');
+  if (freeTimeEl) {
+    freeTimeEl.textContent = `${freeHours}h ${String(freeRemMins).padStart(2, '0')}m`;
+  }
+
+  // Daily Progress
+  const allTodayTasks = currentUser.tasks.filter(t => t.scheduledDate === TODAY || t.deadline === TODAY);
+  const completedTodayTasks = allTodayTasks.filter(t => t.status === 'done');
+  const progressObj = TodayEngineUtil
+    ? TodayEngineUtil.calculateDailyProgress(allTodayTasks, completedTodayTasks)
+    : { totalCount: allTodayTasks.length, completedCount: completedTodayTasks.length, percent: 0 };
+  const progPctEl = $('#todayProgressPercent');
+  if (progPctEl) progPctEl.textContent = `${progressObj.percent}%`;
+  const progSubEl = $('#todayProgressSubtext');
+  if (progSubEl) progSubEl.textContent = `${progressObj.completedCount} / ${progressObj.totalCount} việc hôm nay`;
+
+  // Summary Line in Header Card
+  const summaryEl = $('#todaySummaryText');
+  if (summaryEl) {
+    if (scheduledTasks.length > 0) {
+      summaryEl.innerHTML = `Bạn có <strong>${scheduledTasks.length} phiên học</strong> được lên lịch hôm nay. Thời gian tự do: <strong>${freeHours}h ${freeRemMins}m</strong>.`;
+    } else {
+      summaryEl.textContent = 'Hôm nay chưa có lịch học cố định. Bạn có thể chọn việc từ Hộp thư hoặc thư giãn.';
+    }
+  }
+
+  // Recommended Next Action
+  const rec = TodayEngineUtil ? TodayEngineUtil.recommendNextAction(scheduledOpenTasks, freeMinutes, fixed) : null;
+  const recBtn = $('#startRecommendedBtn');
+  if (rec && rec.recommended) {
+    const focus = rec.recommended;
+    const subject = getSubject(focus.subjectId);
+    const style = appearance(subject || { name: 'Môn khác' });
+    const orbEl = $('#recommendOrb');
+    if (orbEl) {
+      orbEl.className = `subject-orb small ${style.orb}`;
+      orbEl.textContent = style.icon;
+    }
+    const recTitleEl = $('#recommendTitle');
+    if (recTitleEl) recTitleEl.textContent = focus.title;
+    const recDurEl = $('#recommendDuration');
+    if (recDurEl) recDurEl.textContent = `${focus.minutes || 30} phút`;
+    const recRatEl = $('#recommendRationale');
+    if (recRatEl) recRatEl.textContent = rec.rationale || 'Ưu tiên cao nhất';
+    if (recBtn) {
+      recBtn.disabled = false;
+      recBtn.dataset.taskId = focus.id;
+    }
+  } else {
+    const recTitleEl = $('#recommendTitle');
+    if (recTitleEl) recTitleEl.textContent = 'Tất cả nhiệm vụ đã xong!';
+    const recDurEl = $('#recommendDuration');
+    if (recDurEl) recDurEl.textContent = '--';
+    const recRatEl = $('#recommendRationale');
+    if (recRatEl) recRatEl.textContent = 'Bạn không có nhiệm vụ nào cần làm gấp hôm nay.';
+    if (recBtn) {
+      recBtn.disabled = true;
+      delete recBtn.dataset.taskId;
+    }
+  }
+
+  // Attention Center
+  const attentionItems = [];
+  const overdueTasks = (currentUser.tasks || []).filter(t => t.status !== 'done' && t.deadline && t.deadline < TODAY);
+  overdueTasks.forEach(t => {
+    attentionItems.push(`<span>⚠️ Quá hạn: <strong>${escapeHTML(t.title)}</strong> (hạn: ${formatShortDate(t.deadline)})</span>`);
+  });
+  (currentUser.examMilestones || []).forEach(m => {
+    const days = DateUtil ? DateUtil.diffAppDays(m.date, TODAY) : 99;
+    if (days >= 0 && days <= 7) {
+      attentionItems.push(`<span>🎯 Kỳ thi sắp tới: <strong>${escapeHTML(m.title)}</strong> (${days === 0 ? 'HÔM NAY' : days + ' ngày nữa'})</span>`);
+    }
+  });
+  const attBanner = $('#todayAttentionBanner');
+  const attList = $('#todayAttentionList');
+  if (attBanner && attList) {
+    if (attentionItems.length > 0) {
+      attBanner.hidden = false;
+      attList.innerHTML = attentionItems.map(item => `<div class="attention-item">${item}</div>`).join('');
+    } else {
+      attBanner.hidden = true;
+    }
+  }
+
+  // Timeline
+  const todayTimelineItems = [
+    ...fixed.map(e => `<div class="time-entry"><time>${e.start}</time><div class="timeline-line"><span></span></div><div class="schedule-event"><p>Cố định</p><h3>${escapeHTML(e.title)}</h3><small>${e.start} – ${e.end}</small></div></div>`),
+    ...completedToday.map(session => timelineSession(session, true)),
+    ...scheduledTasks.map(task => timelineTask(task))
+  ];
+  const todayHTML = todayTimelineItems.join('') || emptyHTML('Chưa có phiên nào được lên lịch hôm nay.');
+
+  // Upcoming Days (next 2 days)
   const upcomingDays = [];
-  for (let i = 1; i <= 3; i++) {
-    const d = new Date(); d.setDate(d.getDate() + i);
-    const ds = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  for (let i = 1; i <= 2; i++) {
+    const ds = DateUtil ? DateUtil.addAppDays(TODAY, i) : TODAY;
+    const dayOfWeek = DateUtil ? DateUtil.getAppDayOfWeek(ds) : 0;
     const futurePlan = createPlan(ds);
-    if (futurePlan.plan.length || futurePlan.fixed.length) upcomingDays.push({ date: ds, day: dayNames[d.getDay()], plan: futurePlan.plan, fixed: futurePlan.fixed });
+    if (futurePlan.plan.length || futurePlan.fixed.length) {
+      upcomingDays.push({ date: ds, day: dayNames[dayOfWeek], plan: futurePlan.plan, fixed: futurePlan.fixed });
+    }
   }
   const upcomingHTML = upcomingDays.map(ud => {
-    const items = [...ud.fixed.map(e => `<div class="time-entry"><time>${e.start}</time><div class="timeline-line"><span></span></div><div class="schedule-event"><p>Cố định</p><h3>${escapeHTML(e.title)}</h3><small>${e.start} – ${e.end}</small></div></div>`), ...ud.plan.map(task => timelineTask(task))];
+    const items = [
+      ...ud.fixed.map(e => `<div class="time-entry"><time>${e.start}</time><div class="timeline-line"><span></span></div><div class="schedule-event"><p>Cố định</p><h3>${escapeHTML(e.title)}</h3><small>${e.start} – ${e.end}</small></div></div>`),
+      ...ud.plan.map(task => timelineTask(task))
+    ];
     return items.length ? `<div class="upcoming-day"><p class="eyebrow" style="margin-top:12px;margin-bottom:6px;opacity:.6">${ud.day.toUpperCase()}, ${formatShortDate(ud.date)}</p>${items.join('')}</div>` : '';
   }).join('');
-  const todayHTML = [...completedToday.map(session => timelineSession(session, true)), ...plan.plan.map(task => timelineTask(task))].join('') || emptyHTML('Chưa có phiên nào được lên lịch hôm nay.');
-  $('#homeTimeline').innerHTML = todayHTML + (upcomingHTML ? `<div class="upcoming-section"><p class="eyebrow" style="margin-top:16px;margin-bottom:8px;font-weight:700;">SẮP TỚI</p>${upcomingHTML}</div>` : '');
+
+  const homeTimelineEl = $('#homeTimeline');
+  if (homeTimelineEl) {
+    homeTimelineEl.innerHTML = todayHTML + (upcomingHTML ? `<div class="upcoming-section"><p class="eyebrow" style="margin-top:16px;margin-bottom:8px;font-weight:700;">SẮP TỚI</p>${upcomingHTML}</div>` : '');
+  }
+}
+
+function renderInbox() {
+  if (!currentUser) return;
+  const items = InboxServiceUtil ? InboxServiceUtil.getInboxItems(currentUser.tasks) : [];
+  const openItems = items.filter(t => t.status !== 'done');
+
+  // Update badge in sidebar
+  const inboxCountEl = $('#inboxCount');
+  if (inboxCountEl) {
+    inboxCountEl.textContent = openItems.length;
+    inboxCountEl.style.display = openItems.length > 0 ? 'inline-block' : 'none';
+  }
+
+  const boardCountEl = $('#inboxItemsCount');
+  if (boardCountEl) {
+    boardCountEl.textContent = `${openItems.length} việc cần sắp xếp`;
+  }
+
+  const listEl = $('#inboxItemsList');
+  if (!listEl) return;
+
+  if (items.length === 0) {
+    listEl.innerHTML = `
+      <div class="empty-state">
+        <p>Hộp thư đang trống! ✦ Mọi ý tưởng và bài tập đã được xếp lịch gọn gàng.</p>
+        <button type="button" class="primary-button" id="emptyInboxAddBtn" style="margin-top: 10px;">+ Thêm việc mới vào Inbox</button>
+      </div>
+    `;
+    return;
+  }
+
+  listEl.innerHTML = items.map(item => {
+    const isDone = item.status === 'done';
+    const itemIdEsc = escapeHTML(item.id);
+    const duration = item.minutes || 30;
+    const isHigh = item.priority >= 4;
+    return `
+      <div class="inbox-item-card ${isDone ? 'done' : ''}" data-inbox-id="${itemIdEsc}">
+        <div class="inbox-item-main">
+          <button type="button" class="inbox-item-check ${isDone ? 'checked' : ''}" data-inbox-check="${itemIdEsc}" aria-label="Hoàn thành">${isDone ? '✓' : ''}</button>
+          <div class="inbox-item-details">
+            <h4 class="inbox-item-title ${isDone ? 'strikethrough' : ''}">${escapeHTML(item.title)}</h4>
+            <div class="inbox-item-meta">
+              <span class="duration-tag">⏱ ${duration}p</span>
+              <span class="qc-badge ${isHigh ? 'priority-high' : 'priority-normal'}">${isHigh ? 'Ưu tiên cao (!)' : 'Bình thường'}</span>
+              <span>Tạo: ${formatShortDate(item.createdAt || TODAY)}</span>
+            </div>
+          </div>
+        </div>
+        <div class="inbox-actions-group">
+          <button type="button" class="inbox-action-btn" data-inbox-schedule="${itemIdEsc}" title="Xếp vào hôm nay">📅 Hôm nay</button>
+          <button type="button" class="inbox-action-btn" data-inbox-tomorrow="${itemIdEsc}" title="Xếp vào ngày mai">⏩ Ngày mai</button>
+          <button type="button" class="inbox-action-btn" data-open-task="${itemIdEsc}" title="Chỉnh sửa">✏ Sửa</button>
+          <button type="button" class="inbox-action-btn danger" data-inbox-delete="${itemIdEsc}" title="Xóa">🗑</button>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 function taskHTML(task) {
   const subject = getSubject(task.subjectId); const style = appearance(subject || { name: 'Môn khác' }); const done = task.status === 'done';
   const meta = done ? { score: 0, label: 'Hoàn thành', cssClass: 'regular' } : taskPriorityMeta(task);
   const reason = done ? 'Đã hoàn thành' : `${meta.score} điểm · ${describePriorityReason(task)}`;
-  return `<article class="task-row ${done ? 'done' : ''} ${meta.score >= 80 && !done ? 'task-highlight' : ''}" data-task-id="${task.id}"><button class="check-button ${done ? 'checked' : ''}" data-toggle-task="${task.id}" aria-label="Đổi trạng thái nhiệm vụ"></button><div class="task-category ${style.category}">${style.badge}</div><button class="task-main task-open" data-open-task="${task.id}"><h3>${escapeHTML(task.title)}</h3><p><span class="tiny-calendar">□</span>${done ? 'Đã hoàn thành' : deadlineText(task.deadline)} <i>•</i>${escapeHTML(reason)}</p></button><span class="priority-label ${done ? 'regular' : meta.cssClass}">${done ? 'Hoàn thành' : meta.label}</span><button class="task-arrow" data-open-task="${task.id}" aria-label="Chỉnh sửa nhiệm vụ">→</button></article>`;
+  const taskIdEsc = escapeHTML(task.id);
+  return `<article class="task-row ${done ? 'done' : ''} ${meta.score >= 80 && !done ? 'task-highlight' : ''}" data-task-id="${taskIdEsc}"><button class="check-button ${done ? 'checked' : ''}" data-toggle-task="${taskIdEsc}" aria-label="Đổi trạng thái nhiệm vụ"></button><div class="task-category ${style.category}">${escapeHTML(style.badge)}</div><button class="task-main task-open" data-open-task="${taskIdEsc}"><h3>${escapeHTML(task.title)}</h3><p><span class="tiny-calendar">□</span>${done ? 'Đã hoàn thành' : deadlineText(task.deadline)} <i>•</i>${escapeHTML(reason)}</p></button><span class="priority-label ${done ? 'regular' : meta.cssClass}">${done ? 'Hoàn thành' : meta.label}</span><button class="task-arrow" data-open-task="${taskIdEsc}" aria-label="Chỉnh sửa nhiệm vụ">→</button></article>`;
 }
 function renderSubjectProgress() {
   const cards = getSubjectProgressCards(3);
@@ -494,23 +835,26 @@ function renderSubjectProgress() {
     const average = Math.max(0, Math.min(100, Number(subject.average) || 0));
     const statusText = average >= 70 ? '↑ Tiến bộ' : average >= 45 ? 'Đang cải thiện' : 'Cần ưu tiên';
     const target = subject.target || `${subject.topicsCount || 0} chủ đề đang theo dõi`;
-    return `<article class="subject-progress-card ${style.card}"><div class="subject-card-top"><span class="subject-orb small ${style.orb}">${style.icon}</span><span class="trend ${average >= 70 ? 'up' : 'neutral'}">${statusText}</span></div><h3>${escapeHTML(subject.name)}</h3><p class="subject-card-target">${escapeHTML(target)}</p><div class="progress-line"><span style="width:${average}%"></span></div><strong>${average}% <small>nắm vững</small></strong></article>`;
+    return `<article class="subject-progress-card ${style.card}"><div class="subject-card-top"><span class="subject-orb small ${style.orb}">${escapeHTML(style.icon)}</span><span class="trend ${average >= 70 ? 'up' : 'neutral'}">${statusText}</span></div><h3>${escapeHTML(subject.name)}</h3><p class="subject-card-target">${escapeHTML(target)}</p><div class="progress-line"><span style="width:${average}%"></span></div><strong>${average}% <small>nắm vững</small></strong></article>`;
   }).join('') : emptyHTML('Thêm môn học đầu tiên để bắt đầu theo dõi tiến độ.');
 }
 function timelineTask(task) { const subject = getSubject(task.subjectId); return `<div class="time-entry current"><time>${task.start || '—'}</time><div class="timeline-line"><span></span></div><div class="schedule-event"><p>TB đề xuất · ${escapeHTML(subject?.name || 'Tự học')}</p><h3>${escapeHTML(task.title)}</h3><small>${task.minutes} phút</small></div></div>`; }
 function timelineSession(session, complete) { const topic = getTopic(session.topicId); return `<div class="time-entry ${complete ? 'done' : ''}"><time>Đã xong</time><div class="timeline-line"><span></span></div><div class="schedule-event"><p>${complete ? 'Đã hoàn thành' : 'Đã ghi nhận'} · ${escapeHTML(topic?.subject.name || 'Tự học')}</p><h3>${escapeHTML(topic?.name || 'Phiên học')}</h3><small>${session.minutes} phút</small></div></div>`; }
 function renderSchedule() {
-  const svd = new Date(scheduleViewDate + 'T12:00:00+07:00');
   const schedDateLabel = $('.date-navigator strong');
-  if (schedDateLabel) schedDateLabel.textContent = dayNames[svd.getDay()] + ', ' + svd.getDate() + ' tháng ' + (svd.getMonth()+1);
+  if (schedDateLabel) schedDateLabel.textContent = DateUtil ? DateUtil.formatScheduleHeaderDate(scheduleViewDate) : scheduleViewDate;
   const { fixed, plan, capacity } = createPlan(scheduleViewDate); const all = [...fixed.map(item => ({ ...item, flexible: false, sortStart: item.start })), ...plan.map(item => ({ ...item, flexible: true, sortStart: item.start }))].sort((a, b) => a.sortStart.localeCompare(b.sortStart));
   $('#scheduleCapacity').textContent = `Còn ${formatMinutes(Math.max(0, capacity - plan.reduce((sum, task) => sum + task.minutes, 0)))} linh hoạt`;
   const applied = currentUser.lastSimulation ? `<div class="active-plan-banner"><span>✓</span><span><b>Phương án mới đang áp dụng.</b> ${escapeHTML(currentUser.lastSimulation.summary)}</span></div>` : '';
-  $('#scheduleTimeline').innerHTML = applied + (all.length ? all.map(event => `<article class="day-schedule-event ${event.flexible ? 'flexible' : 'fixed'}"><time>${event.start} – ${event.end || event.endTime || timeFromMin(minFromTime(event.start) + Number(event.minutes || 0))}</time><span class="event-rail"></span><div><h3>${escapeHTML(event.title)}</h3><p>${event.flexible ? `Tự học · ${escapeHTML(getSubject(event.subjectId)?.name || '')} · ${event.minutes} phút` : `${event.type === 'school' ? 'Trường học' : event.type === 'tutoring' ? 'Học thêm' : 'Hoạt động cá nhân'} · được bảo toàn`}</p></div><span class="event-tag">${event.flexible ? 'Linh hoạt' : 'Cố định'}</span></article>`).join('') : emptyHTML('Chưa có lịch cố định hay nhiệm vụ mở.'));
+  $('#scheduleTimeline').innerHTML = applied + (all.length ? all.map(event => `<article class="day-schedule-event ${event.flexible ? 'flexible' : 'fixed'}"><time>${event.start} – ${event.end || event.endTime || timeFromMin(minFromTime(event.start) + Number(event.minutes || 0))}</time><span class="event-rail"></span><div><h3>${escapeHTML(event.title)}</h3><p>${event.flexible ? `Tự học · ${escapeHTML(getSubject(event.subjectId)?.name || '')} · ${event.minutes} phút` : `${event.type === 'school' ? 'Trường học' : event.type === 'tutoring' ? 'Học thêm' : 'Hoạt động cá nhân'} · được bảo toàn${event.isModifiedOccurrence ? ' (đã chỉnh giờ)' : ''}`}</p></div>${!event.flexible ? `<button class="text-button mini-skip-btn" data-skip-occurrence="${event.seriesId || event.id}" data-occurrence-date="${scheduleViewDate}" title="Bỏ qua ca này trong ngày ${scheduleViewDate}">Bỏ qua hôm nay</button>` : ''}<span class="event-tag">${event.flexible ? 'Linh hoạt' : 'Cố định'}</span></article>`).join('') : emptyHTML('Chưa có lịch cố định hay nhiệm vụ mở.'));
   const highest = plan[0]; const topic = highest ? getTopic(highest.topicId) : null;
   $('#scheduleReasonTitle').textContent = highest ? `${highest.title} được ưu tiên trước.` : 'Hãy thêm dữ liệu để TB sắp lịch.';
   $('#scheduleReason').textContent = highest ? `${highest.deadline === TODAY ? 'Hạn chót là hôm nay. ' : ''}${topic ? `${topic.name} đang ở mức ${topic.mastery}% nắm vững. ` : ''}Phiên này vừa khít trong khung giờ rảnh và không chạm vào lịch cố định.` : 'TB cần ít nhất một nhiệm vụ, môn học và khung giờ rảnh để tạo một lịch có lý do.';
-  $('#fixedSchedulesList').innerHTML = currentUser.fixedSchedules.length ? currentUser.fixedSchedules.map(event => `<article class="fixed-schedule-card"><button data-delete-fixed="${event.id}" aria-label="Xoá ${escapeHTML(event.title)}">×</button><p>${dayNames[event.day].toUpperCase()} · ${event.type === 'school' ? 'TRƯỜNG HỌC' : event.type === 'tutoring' ? 'HỌC THÊM' : 'CÁ NHÂN'}</p><h3>${escapeHTML(event.title)}</h3><small>${event.start} – ${event.end}</small></article>`).join('') : emptyHTML('Chưa có lịch cố định.');
+  $('#fixedSchedulesList').innerHTML = currentUser.fixedSchedules.length ? currentUser.fixedSchedules.map(event => {
+    const excCount = Array.isArray(event.exceptions) ? event.exceptions.length : 0;
+    const excLabel = excCount > 0 ? `<span class="rec-exc-badge" title="${excCount} ngoại lệ">${excCount} ngoại lệ</span>` : '';
+    return `<article class="fixed-schedule-card"><button data-delete-fixed="${event.id}" aria-label="Xoá ${escapeHTML(event.title)}">×</button><p>${dayNames[event.day].toUpperCase()} · ${event.type === 'school' ? 'TRƯỜNG HỌC' : event.type === 'tutoring' ? 'HỌC THÊM' : 'CÁ NHÂN'} ${excLabel}</p><h3>${escapeHTML(event.title)}</h3><small>${event.start} – ${event.end}</small></article>`;
+  }).join('') : emptyHTML('Chưa có lịch cố định.');
   normalizeScheduleState();
   const existingHistory = $('#changeHistoryDynamic');
   if (existingHistory) existingHistory.remove();
@@ -529,7 +873,13 @@ function renderSubjects() {
 function renderProgress() {
   const completed = currentUser.sessions.filter(session => session.status === 'complete'); const minutes = completed.reduce((sum, session) => sum + Number(session.minutes), 0);
   $('#studyMinutes').textContent = formatMinutes(minutes); $('#studyTrend').textContent = completed.length ? `Dựa trên ${completed.length} phiên hoàn thành đã lưu` : 'Chưa có phiên hoàn thành';
-  const weekdayMinutes = [1, 2, 3, 4, 5, 6, 0].map(day => { const now = new Date(); const currentDay = now.getDay(); const diff = day - currentDay; const target = new Date(now); target.setDate(now.getDate() + diff + (diff > 0 ? -7 : 0)); const date = target.getFullYear() + '-' + String(target.getMonth()+1).padStart(2,'0') + '-' + String(target.getDate()).padStart(2,'0'); return completed.filter(session => session.date === date).reduce((sum, session) => sum + session.minutes, 0); }); const max = Math.max(...weekdayMinutes, 60);
+  const todayWeekday = DateUtil ? DateUtil.getAppDayOfWeek(TODAY) : new Date().getDay();
+  const weekdayMinutes = [1, 2, 3, 4, 5, 6, 0].map(day => {
+    const diff = day - todayWeekday;
+    const targetDate = DateUtil ? DateUtil.addAppDays(TODAY, diff + (diff > 0 ? -7 : 0)) : TODAY;
+    return completed.filter(session => session.date === targetDate).reduce((sum, session) => sum + session.minutes, 0);
+  });
+  const max = Math.max(...weekdayMinutes, 60);
   $('#barChart').innerHTML = weekdayMinutes.map((value, index) => `<i style="height:${Math.max(8, Math.round((value / max) * 100))}%" title="${value} phút"></i>`).join('');
   const review = currentUser.reviewSchedules.filter(item => item.status === 'scheduled').sort((a, b) => a.due.localeCompare(b.due))[0]; const topic = review ? getTopic(review.topicId) : null;
   if (topic) { $('#reviewTopic').textContent = topic.name; $('#retentionValues').innerHTML = `<span>Trước học<b>${topic.quiz?.before ?? '—'}/10</b></span><i></i><span>Sau học<b>${topic.quiz?.after ?? '—'}/10</b></span><i></i><span>Sau ${review.interval} ngày<b>${topic.quiz?.retention ?? '—'}/10</b></span>`; $('#reviewNote').innerHTML = dateFrom(review.due) <= dateFrom(TODAY) ? `Đến lịch ôn lại hôm nay. TB đặt lần ôn này sau <strong>${review.interval} ngày</strong> vì đó là khoảng cách đã lưu từ phiên trước.` : `Lần ôn kế tiếp: <strong>${formatShortDate(review.due)}</strong>. Khoảng cách hiện tại là ${review.interval} ngày.`; $('#reviewNote').insertAdjacentHTML('beforeend', ` <button class="soft-button" data-complete-review="${review.id}">Đánh dấu đã ôn xong</button>`); } else { $('#reviewTopic').textContent = 'Chưa có lịch ôn'; $('#retentionValues').innerHTML = '<span>Hãy hoàn thành một phiên học để TB tạo lịch ôn.</span>'; $('#reviewNote').textContent = 'Spaced repetition sẽ thay đổi khoảng cách theo mức độ hiểu bạn ghi nhận.'; }
@@ -844,11 +1194,19 @@ function renderTakeNotes() {
 }
 
 function openPhotoLightbox(src) {
+  if (!isSafeImageUrl(src)) return;
   const existing = $('.lightbox-modal');
   if (existing) existing.remove();
   const box = document.createElement('div');
   box.className = 'lightbox-modal';
-  box.innerHTML = `<img src="${src}" alt="Ảnh bài học phóng to" /><span style="position:absolute;top:20px;right:25px;color:#fff;font-size:32px;cursor:pointer;line-height:1;">×</span>`;
+  const img = document.createElement('img');
+  img.src = src;
+  img.alt = 'Ảnh bài học phóng to';
+  const closeBtn = document.createElement('span');
+  closeBtn.style.cssText = 'position:absolute;top:20px;right:25px;color:#fff;font-size:32px;cursor:pointer;line-height:1;';
+  closeBtn.textContent = '×';
+  box.appendChild(img);
+  box.appendChild(closeBtn);
   box.addEventListener('click', () => box.remove());
   document.body.appendChild(box);
 }
@@ -1363,7 +1721,7 @@ function renderImportPreview() {
       <div class="preview-slot-item">
         <span class="preview-slot-day">${dayNames[slot.day] || 'T' + (slot.day+1)}</span>
         <span class="preview-slot-time">${slot.start}–${slot.end}</span>
-        <span class="preview-slot-name">${escapeHTML(slot.title)} <small style="color:#888;font-weight:normal;">${slot.periodLabel ? '(' + slot.periodLabel + ')' : ''}</small></span>
+        <span class="preview-slot-name">${escapeHTML(slot.title)} <small style="color:#888;font-weight:normal;">${slot.periodLabel ? '(' + escapeHTML(slot.periodLabel) + ')' : ''}</small></span>
         <button type="button" class="preview-slot-del" data-delete-import-slot="${idx}" aria-label="Xóa ca">×</button>
       </div>
     `).join('');
@@ -1432,6 +1790,7 @@ function renderApp() {
   renderCalendar();
   renderExamCountdown();
   renderToday();
+  renderInbox();
   renderTakeNotes();
   renderSubjectProgress();
   renderSchedule();
@@ -1440,12 +1799,676 @@ function renderApp() {
   renderTasks();
   renderInsights();
   renderSettings();
+  updateNotificationBadge();
+  if (notificationScheduler && currentUser?.settings?.reminders !== false) {
+    try { notificationScheduler.reconcile(currentUser); } catch (e) { console.warn('Scheduler reconcile error:', e); }
+  }
 }
 
 function showPage(page) { activePage = page; $$('.page').forEach(item => item.classList.toggle('active-page', item.id === page)); $$('.nav-link').forEach(item => item.classList.toggle('active', item.dataset.page === page)); renderHeader(); if (window.innerWidth <= 600) $('.sidebar').classList.remove('mobile-open'); window.scrollTo({ top: 0, behavior: 'smooth' }); }
 function openModal(id) { const modal = $(`#${id}`); if (!modal) return; modal.classList.add('open'); modal.setAttribute('aria-hidden', 'false'); document.body.style.overflow = 'hidden'; }
 function closeModal(id) { const modal = $(`#${id}`); if (!modal) return; modal.classList.remove('open'); modal.setAttribute('aria-hidden', 'true'); if (id === 'quickLogModal' && pendingTimerCompletion) { pendingTimerCompletion = null; $('#logTopic').disabled = false; $('#logMinutes').disabled = false; $('#quickLogTitle').textContent = 'Bạn vừa học thế nào?'; } if (!$$('.modal-backdrop.open').length) document.body.style.overflow = ''; }
-function toast(message) { const element = $('#toast'); element.textContent = message; element.classList.add('show'); clearTimeout(element.timer); element.timer = setTimeout(() => element.classList.remove('show'), 3000); }
+function toast(message, type = 'info') {
+  if (notificationService) {
+    if (type === 'danger' || type === 'error') {
+      return notificationService.error(message);
+    }
+    if (type === 'success') {
+      return notificationService.success(message);
+    }
+    if (type === 'warning') {
+      return notificationService.warning(message);
+    }
+    return notificationService.notify(message);
+  }
+  const element = $('#toast');
+  if (element) {
+    element.style.display = 'block';
+    element.textContent = message;
+    element.classList.add('show');
+    clearTimeout(element.timer);
+    element.timer = setTimeout(() => {
+      element.classList.remove('show');
+      element.style.display = 'none';
+    }, 3000);
+  }
+}
+
+// ── Quick Capture & Inbox Architecture (PRODUCT UX PHASE 1) ────────────────
+let quickCaptureChosenDest = 'inbox';
+let currentParsedCapture = null;
+
+function openQuickCaptureModal() {
+  const input = $('#quickCaptureInput');
+  if (input) input.value = '';
+  quickCaptureChosenDest = 'inbox';
+  syncQcChips('inbox');
+  updateQuickCapturePreview();
+  openModal('quickCaptureModal');
+  setTimeout(() => {
+    if (input) input.focus();
+  }, 50);
+}
+
+function syncQcChips(dest) {
+  quickCaptureChosenDest = dest;
+  $$('.qc-chip').forEach(chip => {
+    chip.classList.toggle('active', chip.dataset.dest === dest);
+  });
+}
+
+function updateQuickCapturePreview() {
+  const input = $('#quickCaptureInput');
+  const text = input ? input.value : '';
+  const parsed = QuickCaptureUtil ? QuickCaptureUtil.parseCaptureInput(text, TODAY) : {
+    cleanTitle: text.trim(),
+    durationMinutes: 30,
+    targetDate: null,
+    priority: 3,
+    destination: 'Inbox'
+  };
+  currentParsedCapture = parsed;
+
+  const titleEl = $('#qcParsedTitle');
+  if (titleEl) {
+    titleEl.textContent = parsed.cleanTitle || 'Nhập tiêu đề ở trên...';
+  }
+
+  const durationEl = $('#qcParsedDuration');
+  if (durationEl) {
+    durationEl.textContent = `⏱ ${parsed.durationMinutes} phút`;
+  }
+
+  const priorityEl = $('#qcPriorityBadge');
+  if (priorityEl) {
+    const isHigh = parsed.priority >= 4;
+    priorityEl.className = `qc-badge ${isHigh ? 'priority-high' : 'priority-normal'}`;
+    priorityEl.textContent = isHigh ? 'Ưu tiên cao (!)' : 'Ưu tiên thường';
+  }
+
+  const destToUse = quickCaptureChosenDest;
+  const dateEl = $('#qcParsedDate');
+  if (dateEl) {
+    if (destToUse === 'today') {
+      dateEl.textContent = `📅 Lên lịch: Hôm nay (${formatShortDate(TODAY)})`;
+    } else if (destToUse === 'tomorrow') {
+      const tomorrow = DateUtil ? DateUtil.addAppDays(TODAY, 1) : TODAY;
+      dateEl.textContent = `📅 Lên lịch: Ngày mai (${formatShortDate(tomorrow)})`;
+    } else if (destToUse === 'inbox') {
+      dateEl.textContent = '📥 Lưu vào Hộp thư (Inbox)';
+    } else if (parsed.targetDate) {
+      dateEl.textContent = `📅 Lên lịch: ${formatShortDate(parsed.targetDate)}`;
+    } else {
+      dateEl.textContent = '📥 Lưu vào Hộp thư (Inbox)';
+    }
+  }
+}
+
+function submitQuickCapture() {
+  if (!currentParsedCapture || !currentParsedCapture.cleanTitle) {
+    toast('Vui lòng nhập tên công việc.', 'warning');
+    return;
+  }
+  const dest = quickCaptureChosenDest;
+  let scheduledDate = null;
+  let isInbox = false;
+
+  if (dest === 'today') {
+    scheduledDate = TODAY;
+    isInbox = false;
+  } else if (dest === 'tomorrow') {
+    scheduledDate = DateUtil ? DateUtil.addAppDays(TODAY, 1) : TODAY;
+    isInbox = false;
+  } else if (dest === 'inbox') {
+    scheduledDate = null;
+    isInbox = true;
+  } else if (currentParsedCapture.targetDate) {
+    scheduledDate = currentParsedCapture.targetDate;
+    isInbox = false;
+  } else {
+    isInbox = true;
+  }
+
+  const newTask = {
+    id: 'task-' + Date.now(),
+    subjectId: currentUser.subjects[0]?.id || 'math',
+    title: currentParsedCapture.cleanTitle,
+    minutes: currentParsedCapture.durationMinutes || 30,
+    priority: currentParsedCapture.priority || 3,
+    status: 'open',
+    isInbox: isInbox,
+    scheduledDate: scheduledDate,
+    deadline: scheduledDate,
+    createdAt: TODAY
+  };
+
+  currentUser.tasks = currentUser.tasks || [];
+  currentUser.tasks.push(newTask);
+  persist();
+  closeModal('quickCaptureModal');
+  renderApp();
+  toast(`Đã thêm: "${newTask.title}" (${isInbox ? 'Hộp thư Inbox' : 'Lịch ' + formatShortDate(scheduledDate)})`, 'success');
+}
+
+let proposedInboxPlan = [];
+
+function openPlanInboxModal() {
+  const items = InboxServiceUtil ? InboxServiceUtil.getInboxItems(currentUser.tasks) : [];
+  const openItems = items.filter(t => t.status !== 'done');
+  if (!openItems.length) {
+    toast('Hộp thư đang trống, không có công việc nào cần xếp lịch.', 'info');
+    return;
+  }
+
+  const planToday = createPlan(TODAY);
+  const freeToday = TodayEngineUtil
+    ? TodayEngineUtil.calculateFreeTime(currentUser.availability, planToday.fixed, planToday.plan, DateUtil ? DateUtil.getNowVietnam() : new Date())
+    : 60;
+
+  const tomorrow = DateUtil ? DateUtil.addAppDays(TODAY, 1) : TODAY;
+
+  const sorted = [...openItems].sort((a, b) => (b.priority || 3) - (a.priority || 3));
+  proposedInboxPlan = [];
+  let curTodayCap = freeToday;
+
+  for (const item of sorted) {
+    const dur = Number(item.minutes) || 30;
+    if (curTodayCap >= dur) {
+      proposedInboxPlan.push({ item, targetDate: TODAY, dateLabel: 'Hôm nay' });
+      curTodayCap -= dur;
+    } else {
+      proposedInboxPlan.push({ item, targetDate: tomorrow, dateLabel: 'Ngày mai' });
+    }
+  }
+
+  const listEl = $('#planInboxPreviewList');
+  if (listEl) {
+    listEl.innerHTML = proposedInboxPlan.map(p => `
+      <div class="plan-preview-item">
+        <div>
+          <strong>${escapeHTML(p.item.title)}</strong>
+          <small style="display:block;color:#7e7a72;font-family:'DM Mono';">⏱ ${p.item.minutes || 30}p · ${p.item.priority >= 4 ? 'Ưu tiên cao' : 'Bình thường'}</small>
+        </div>
+        <span class="plan-preview-slot">➜ ${p.dateLabel} (${formatShortDate(p.targetDate)})</span>
+      </div>
+    `).join('');
+  }
+
+  openModal('planInboxModal');
+}
+
+function applyProposedInboxPlan() {
+  if (!proposedInboxPlan.length) return;
+  for (const p of proposedInboxPlan) {
+    if (InboxServiceUtil) {
+      InboxServiceUtil.scheduleItem(p.item, p.targetDate);
+    } else {
+      p.item.scheduledDate = p.targetDate;
+      p.item.deadline = p.targetDate;
+      p.item.isInbox = false;
+    }
+  }
+  persist();
+  closeModal('planInboxModal');
+  renderApp();
+  toast(`Đã xếp lịch cho ${proposedInboxPlan.length} việc từ Hộp thư!`, 'success');
+  showPage('schedule');
+}
+
+/* ─────────────────────────────────────────────────────────────
+   P1.1 AI TIME MANAGEMENT FOUNDATION (ASK CALENDAR & REVIEW)
+   ───────────────────────────────────────────────────────────── */
+
+// ─── P1.2 — AI Planner State ─────────────────────────────────────────────────
+let currentAiProposal = null;
+let currentAiIntent = null;
+let _currentAiContext = null; // context snapshot used when proposal was generated
+
+/**
+ * Compute a deterministic fingerprint of the current user's calendar state.
+ * Used for stale-proposal detection.
+ * @returns {string} 8-char hex fingerprint
+ */
+function getCurrentCalendarRevision() {
+  if (typeof PlannerContext !== 'undefined' && PlannerContext.computeCalendarRevision) {
+    return PlannerContext.computeCalendarRevision(currentUser);
+  }
+  // Fallback: simple JSON hash of tasks + fixedSchedules length
+  if (!currentUser) return '00000000';
+  const key = (currentUser.tasks || []).length + ':' + (currentUser.fixedSchedules || []).length;
+  let hash = 5381;
+  for (let i = 0; i < key.length; i++) {
+    hash = ((hash << 5) + hash) ^ key.charCodeAt(i);
+    hash = hash >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+/**
+ * Renders the Plan Quality Score Meter in the review modal.
+ * @param {Object} quality - { score, strengths, warnings, metrics }
+ */
+function renderQualityMeter(quality) {
+  const meter = $('#aiQualityMeter');
+  if (!meter || !quality) return;
+
+  meter.hidden = false;
+  const scorePill = $('#aiQualityScorePill');
+  const barFill = $('#aiQualityBarFill');
+  const strengthsList = $('#aiQualityStrengths');
+  const warnsList = $('#aiQualityWarningsList');
+
+  const score = quality.score || 0;
+  if (scorePill) {
+    scorePill.textContent = score + ' / 100';
+    scorePill.className = 'ai-quality-score-pill' + (
+      score >= 80 ? ' score-high' : score >= 55 ? ' score-mid' : ' score-low'
+    );
+  }
+  if (barFill) barFill.style.width = score + '%';
+  if (strengthsList) {
+    strengthsList.innerHTML = (quality.strengths || [])
+      .map(s => `<li>${escapeHTML(s)}</li>`).join('');
+  }
+  if (warnsList) {
+    warnsList.innerHTML = (quality.warnings || [])
+      .map(w => `<li>${escapeHTML(w)}</li>`).join('');
+  }
+}
+
+/**
+ * Renders interactive action cards into #aiProposedActionsList.
+ * Each card has: title, type badge, time display, date input, time input, remove button.
+ * @param {Array} actions
+ */
+function renderActionCards(actions) {
+  const actionsListEl = $('#aiProposedActionsList');
+  if (!actionsListEl) return;
+
+  actionsListEl.innerHTML = (actions || []).map((act, idx) => {
+    const isEvent = act.type === 'create_event';
+    const typeLabel = isEvent ? 'Lịch cố định' : 'Nhiệm vụ học';
+    const typeClass = isEvent ? 'type-event' : '';
+    const slotText = (act.startTime && act.endTime) ? `${act.startTime} – ${act.endTime}` : `${act.durationMinutes || 45}p`;
+
+    return `
+      <div class="ai-action-card" data-action-idx="${idx}">
+        <div class="ai-action-card-header">
+          <span class="ai-action-card-title">${escapeHTML(act.title)}</span>
+          <span class="ai-action-card-time">${slotText}</span>
+          <span class="ai-action-card-type ${typeClass}">${typeLabel}</span>
+        </div>
+        <div class="ai-action-edit-row">
+          <span class="ai-action-edit-label">Ngày:</span>
+          <input type="date" class="ai-action-date-input" data-action-idx="${idx}" value="${escapeHTML(act.date || '')}" />
+          <span class="ai-action-edit-label">Giờ bắt đầu:</span>
+          <input type="time" class="ai-action-time-input" data-action-idx="${idx}" value="${escapeHTML(act.startTime || '')}" />
+          <button type="button" class="ai-action-remove-btn" data-action-idx="${idx}" aria-label="Xóa hành động này">✕</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Attach delegated change listeners for live quality recalculation
+  actionsListEl.addEventListener('change', handleActionCardEdit);
+  actionsListEl.addEventListener('click', handleActionCardRemove);
+}
+
+/**
+ * Handles date/time edits on action cards — updates the proposal in-memory
+ * and live-recalculates quality score.
+ */
+function handleActionCardEdit(e) {
+  if (!currentAiProposal || !Array.isArray(currentAiProposal.actions)) return;
+  const input = e.target;
+  const idx = parseInt(input.dataset.actionIdx, 10);
+  if (isNaN(idx) || idx < 0 || idx >= currentAiProposal.actions.length) return;
+
+  const action = currentAiProposal.actions[idx];
+  if (input.classList.contains('ai-action-date-input')) {
+    action.date = input.value;
+  } else if (input.classList.contains('ai-action-time-input')) {
+    action.startTime = input.value;
+    // Recompute endTime from startTime + durationMinutes
+    if (action.durationMinutes > 0 && typeof AppDate !== 'undefined' && AppDate.minFromTime && AppDate.timeFromMin) {
+      action.endTime = AppDate.timeFromMin(AppDate.minFromTime(input.value) + action.durationMinutes);
+    }
+  }
+
+  // Live re-validate and re-evaluate quality
+  liveRevalidateProposal();
+}
+
+/**
+ * Handles remove button clicks on action cards.
+ */
+function handleActionCardRemove(e) {
+  if (!currentAiProposal || !Array.isArray(currentAiProposal.actions)) return;
+  const btn = e.target.closest('.ai-action-remove-btn');
+  if (!btn) return;
+
+  const idx = parseInt(btn.dataset.actionIdx, 10);
+  if (isNaN(idx)) return;
+
+  currentAiProposal.actions.splice(idx, 1);
+  renderActionCards(currentAiProposal.actions);
+  liveRevalidateProposal();
+}
+
+/**
+ * Live re-validates the current proposal and refreshes the quality score.
+ */
+function liveRevalidateProposal() {
+  if (!currentAiProposal || !_currentAiContext) return;
+
+  // Re-validate
+  const validation = (typeof PlanningProposal !== 'undefined' && PlanningProposal.validatePlanningProposal)
+    ? PlanningProposal.validatePlanningProposal(currentAiProposal, _currentAiContext)
+    : { valid: true, warnings: [] };
+
+  // Re-evaluate quality
+  const quality = (typeof PlanEvaluator !== 'undefined' && PlanEvaluator.evaluatePlanQuality)
+    ? PlanEvaluator.evaluatePlanQuality(currentAiProposal, _currentAiContext)
+    : null;
+
+  renderQualityMeter(quality);
+
+  const warningsBox = $('#aiWarningsBox');
+  const warningsList = $('#aiWarningsList');
+  const allWarnings = [
+    ...(Array.isArray(currentAiProposal.warnings) ? currentAiProposal.warnings : []),
+    ...(Array.isArray(validation.warnings) ? validation.warnings : [])
+  ];
+  if (warningsBox && warningsList) {
+    if (allWarnings.length > 0) {
+      warningsBox.hidden = false;
+      warningsList.innerHTML = allWarnings.map(w =>
+        `<li>${escapeHTML(typeof w === 'string' ? w : (w.message || JSON.stringify(w)))}</li>`
+      ).join('');
+    } else {
+      warningsBox.hidden = true;
+    }
+  }
+}
+
+async function handleAiAskSubmit() {
+  const inputEl = $('#aiAskInput');
+  const text = (inputEl ? inputEl.value : '').trim();
+  if (!text) {
+    toast('Vui lòng nhập yêu cầu của bạn, ví dụ: "Ngày mai học Lý 2 tiếng, làm Anh 1 tiếng, tối 7h đá bóng..."', 'info');
+    return;
+  }
+
+  const btn = $('#aiAskBtn');
+  const statusPill = $('#aiStatusPill');
+  if (btn) btn.disabled = true;
+  if (statusPill) {
+    statusPill.textContent = 'Đang phân tích...';
+    statusPill.style.color = '#c8892c';
+  }
+
+  try {
+    // Build context with calendar revision for stale protection
+    const context = (typeof PlannerContext !== 'undefined' && PlannerContext.buildPlanningContext)
+      ? PlannerContext.buildPlanningContext(currentUser, TODAY, { horizonDays: 3 })
+      : { currentDate: TODAY, availability: currentUser?.availability || { start: '15:00', end: '21:30' } };
+
+    _currentAiContext = context; // snapshot for live revalidation
+
+    const aiClient = (typeof ClientAIAdapterUtil !== 'undefined' && ClientAIAdapterUtil)
+      ? new ClientAIAdapterUtil()
+      : null;
+
+    let intentRes = null;
+    let planRes = null;
+
+    if (aiClient) {
+      intentRes = await aiClient.parseIntent(text, context);
+      planRes = await aiClient.generatePlan(text, context);
+    } else {
+      const fallback = (typeof DeterministicFallbackProvider !== 'undefined')
+        ? new DeterministicFallbackProvider()
+        : null;
+      if (fallback) {
+        intentRes = await fallback.parseIntent(text, context);
+        planRes = await fallback.generatePlan(text, context);
+      }
+    }
+
+    const intent = (intentRes && intentRes.intent) ? intentRes.intent : null;
+    let proposal = (planRes && planRes.proposal) ? planRes.proposal : null;
+
+    if (!proposal || !Array.isArray(proposal.actions) || proposal.actions.length === 0) {
+      toast('Không tìm thấy hành động lịch trình phù hợp trong câu yêu cầu. Hãy thử miêu tả rõ hơn thời gian hoặc môn học.', 'warning');
+      return;
+    }
+
+    // Embed calendar revision into proposal for stale detection
+    proposal.contextVersion = getCurrentCalendarRevision();
+
+    // Validate
+    const validation = (typeof PlanningProposal !== 'undefined' && PlanningProposal.validatePlanningProposal)
+      ? PlanningProposal.validatePlanningProposal(proposal, context)
+      : { valid: true, warnings: [] };
+
+    // Evaluate quality
+    const quality = (typeof PlanEvaluator !== 'undefined' && PlanEvaluator.evaluatePlanQuality)
+      ? PlanEvaluator.evaluatePlanQuality(proposal, context)
+      : null;
+
+    if (quality) proposal.quality = quality;
+
+    currentAiProposal = proposal;
+    currentAiIntent = intent;
+
+    // Reset stale banner
+    const staleBanner = $('#aiStaleWarningBanner');
+    if (staleBanner) staleBanner.hidden = true;
+
+    // Populate source tag & confidence
+    const sourceTag = $('#aiReviewSourceTag');
+    if (sourceTag) {
+      sourceTag.textContent = proposal.source === 'ai' ? '✦ AI PLANNING (GEMINI)' : '✦ SMART ENGINE (DỰ PHÒNG)';
+    }
+    const confBadge = $('#aiConfidenceBadge');
+    if (confBadge) {
+      const pct = Math.round((proposal.confidence || 0.9) * 100);
+      confBadge.textContent = `Độ tin cậy: ${pct}%`;
+    }
+
+    // Render quality meter
+    renderQualityMeter(quality);
+
+    // Render intent chips
+    const fixedContainer = $('#aiFixedChipsList');
+    const taskContainer = $('#aiTaskChipsList');
+    const fixedGroup = $('#aiFixedChips');
+    const taskGroup = $('#aiTaskChips');
+
+    if (fixedContainer && taskContainer) {
+      const fixedItems = (intent && Array.isArray(intent.fixedEvents)) ? intent.fixedEvents : [];
+      const taskItems = (intent && Array.isArray(intent.tasks)) ? intent.tasks : [];
+
+      if (fixedItems.length > 0) {
+        if (fixedGroup) fixedGroup.hidden = false;
+        fixedContainer.innerHTML = fixedItems.map(f => `
+          <span class="ai-pill-chip fixed-chip">
+            📌 ${escapeHTML(f.title)} (${f.start} - ${f.end})
+          </span>
+        `).join('');
+      } else if (fixedGroup) {
+        fixedGroup.hidden = true;
+      }
+
+      if (taskItems.length > 0) {
+        if (taskGroup) taskGroup.hidden = false;
+        taskContainer.innerHTML = taskItems.map(t => `
+          <span class="ai-pill-chip task-chip">
+            ⏱ ${escapeHTML(t.title)} (${t.durationMinutes}p)
+          </span>
+        `).join('');
+      } else if (taskGroup) {
+        taskGroup.hidden = true;
+      }
+    }
+
+    // Render interactive action cards (P1.2: with edit controls)
+    renderActionCards(proposal.actions);
+
+    // Render rationales
+    const rationaleListEl = $('#aiRationaleList');
+    if (rationaleListEl) {
+      const reasons = Array.isArray(proposal.rationale) ? proposal.rationale : [];
+      if (reasons.length > 0) {
+        rationaleListEl.innerHTML = reasons.map(r =>
+          `<li>${escapeHTML(typeof r === 'string' ? r : (r.reason || ''))}</li>`
+        ).join('');
+      } else {
+        rationaleListEl.innerHTML = '<li>Đã cân đối dựa trên thời gian rảnh và thứ tự ưu tiên của bạn.</li>';
+      }
+    }
+
+    // Render warnings
+    const warningsBox = $('#aiWarningsBox');
+    const warningsList = $('#aiWarningsList');
+    const allWarnings = [
+      ...(Array.isArray(proposal.warnings) ? proposal.warnings : []),
+      ...(Array.isArray(validation.warnings) ? validation.warnings : [])
+    ];
+    if (warningsBox && warningsList) {
+      if (allWarnings.length > 0) {
+        warningsBox.hidden = false;
+        warningsList.innerHTML = allWarnings.map(w =>
+          `<li>${escapeHTML(typeof w === 'string' ? w : (w.message || JSON.stringify(w)))}</li>`
+        ).join('');
+      } else {
+        warningsBox.hidden = true;
+      }
+    }
+
+    openModal('aiPlanReviewModal');
+  } catch (err) {
+    console.error('AI Ask error:', err);
+    toast('Có lỗi xảy ra khi xử lý yêu cầu AI. Vui lòng thử lại.', 'danger');
+  } finally {
+    if (btn) btn.disabled = false;
+    if (statusPill) {
+      statusPill.textContent = 'Sẵn sàng';
+      statusPill.style.color = '';
+    }
+  }
+}
+
+function applyProposedAiPlan() {
+  if (!currentAiProposal || !Array.isArray(currentAiProposal.actions) || !currentAiProposal.actions.length) {
+    toast('Không có đề xuất nào để áp dụng.', 'info');
+    return;
+  }
+
+  // ── Stale Proposal Protection ──────────────────────────────────────────────
+  const proposalRevision = currentAiProposal.contextVersion;
+  const currentRevision = getCurrentCalendarRevision();
+
+  if (proposalRevision && proposalRevision !== currentRevision) {
+    const staleBanner = $('#aiStaleWarningBanner');
+    if (staleBanner) staleBanner.hidden = false;
+    toast('⚠️ Lịch của bạn đã thay đổi. Kế hoạch này đã lỗi thời và cần được tính lại.', 'warning');
+    return;
+  }
+
+  // ── Fresh Re-Validation Before Applying ───────────────────────────────────
+  const freshContext = (typeof PlannerContext !== 'undefined' && PlannerContext.buildPlanningContext)
+    ? PlannerContext.buildPlanningContext(currentUser, TODAY)
+    : _currentAiContext || { currentDate: TODAY };
+
+  const validation = (typeof PlanningProposal !== 'undefined' && PlanningProposal.validatePlanningProposal)
+    ? PlanningProposal.validatePlanningProposal(currentAiProposal, freshContext)
+    : { valid: true, errors: [] };
+
+  if (!validation.valid) {
+    toast('⚠️ Kế hoạch có xung đột thời gian. Vui lòng chỉnh sửa lại trước khi áp dụng.', 'warning');
+    liveRevalidateProposal();
+    return;
+  }
+
+  // ── Apply Actions ──────────────────────────────────────────────────────────
+  let eventCount = 0;
+  let taskCount = 0;
+
+  for (const act of currentAiProposal.actions) {
+    if (act.type === 'create_event') {
+      currentUser.fixedSchedules = currentUser.fixedSchedules || [];
+      const actDate = act.date || TODAY;
+      const weekday = (typeof AppDate !== 'undefined' && AppDate.getWeekday) ? AppDate.getWeekday(actDate) : 1;
+      currentUser.fixedSchedules.push({
+        id: 'event-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+        title: act.title,
+        day: weekday,
+        start: act.startTime || '19:00',
+        end: act.endTime || '20:00',
+        date: actDate,
+        type: 'activity',
+        fixed: true
+      });
+      eventCount++;
+    } else if (act.type === 'schedule_task') {
+      currentUser.tasks = currentUser.tasks || [];
+      currentUser.tasks.push({
+        id: 'task-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+        subjectId: currentUser.subjects?.[0]?.id || 'general',
+        title: act.title,
+        minutes: act.durationMinutes || 45,
+        priority: 3,
+        status: 'open',
+        isInbox: false,
+        scheduledDate: act.date || TODAY,
+        deadline: act.date || TODAY,
+        startTime: act.startTime,
+        endTime: act.endTime,
+        createdAt: TODAY
+      });
+      taskCount++;
+    } else if (act.type === 'move_task') {
+      const existing = (currentUser.tasks || []).find(t => t.id === act.taskId);
+      if (existing) {
+        existing.scheduledDate = act.targetDate || TODAY;
+        existing.deadline = act.targetDate || TODAY;
+        existing.isInbox = false;
+        taskCount++;
+      }
+    }
+  }
+
+  persist();
+  closeModal('aiPlanReviewModal');
+  renderApp();
+
+  const inputEl = $('#aiAskInput');
+  if (inputEl) inputEl.value = '';
+
+  // ── Notification Engine Integration ───────────────────────────────────────
+  const summary = [];
+  if (eventCount > 0) summary.push(`${eventCount} sự kiện cố định`);
+  if (taskCount > 0) summary.push(`${taskCount} việc học`);
+  const successMsg = `Đã áp dụng thành công ${summary.join(' và ')} vào lịch!`;
+
+  if (typeof notificationService !== 'undefined' && notificationService.notify) {
+    notificationService.notify({
+      title: '✦ Kế hoạch AI đã áp dụng',
+      message: successMsg,
+      type: 'SYSTEM_FEEDBACK',
+      severity: 'success'
+    });
+  } else {
+    toast(successMsg, 'success');
+  }
+
+  currentAiProposal = null;
+  currentAiIntent = null;
+  _currentAiContext = null;
+
+  showPage('schedule');
+}
 
 function openStudy(taskId) { const task = getTask(taskId) || openTasks()[0]; if (!task) { toast('Hãy thêm một nhiệm vụ trước khi bắt đầu phiên học.'); showPage('tasks'); return; } selectedTimerTask = task; timerTotal = Number(task.minutes) * 60; timerSeconds = timerTotal; const subject = getSubject(task.subjectId); const style = appearance(subject); $('#timerOrb').className = `subject-orb ${style.orb} large`; $('#timerOrb').innerHTML = style.icon; $('#timerMeta').textContent = `${subject?.name || 'Tự học'} · ${task.minutes} PHÚT`; $('#studyTitle').textContent = task.title; $('#timerNote').textContent = 'Khi hoàn thành, TB sẽ lưu phiên học và tạo mốc ôn lại dựa trên mức độ hiểu của bạn.'; updateTimer(); $('#pauseTimer').textContent = 'Tạm dừng'; openModal('studyModal'); if (!timerRunning) toggleTimer(); }
 function updateTimer() { $('#timerDisplay').textContent = `${String(Math.floor(timerSeconds / 60)).padStart(2, '0')}:${String(timerSeconds % 60).padStart(2, '0')}`; $('#timerProgress').style.width = `${Math.min(100, ((timerTotal - timerSeconds) / timerTotal) * 100)}%`; }
@@ -1490,7 +2513,18 @@ function toggleTask(taskId) { const task = getTask(taskId); if (!task) return; t
 function populateTaskFields(subjectId, topicId) { const select = $('#taskSubject'); select.innerHTML = currentUser.subjects.map(subject => `<option value="${subject.id}">${escapeHTML(subject.name)}</option>`).join(''); if (subjectId) select.value = subjectId; const subject = getSubject(select.value); $('#taskTopic').innerHTML = subject?.topics.length ? subject.topics.map(topic => `<option value="${topic.id}">${escapeHTML(topic.name)}</option>`).join('') : '<option value="">Chưa có chủ đề</option>'; if (topicId) $('#taskTopic').value = topicId; }
 function openTaskModal(task = null) { if (!currentUser.subjects.length) { toast('Hãy thêm ít nhất một môn học trước khi tạo nhiệm vụ.'); showPage('subjects'); return; } $('#taskModalTitle').textContent = task ? 'Chỉnh sửa nhiệm vụ' : 'Thêm nhiệm vụ mới'; $('#taskId').value = task?.id || ''; $('#taskName').value = task?.title || ''; populateTaskFields(task?.subjectId, task?.topicId); $('#taskDuration').value = String(task?.minutes || 45); $('#taskPriority').value = String(task?.priority || 4); $('#taskDeadline').value = task?.deadline || TODAY; $('#deleteTaskButton').hidden = !task; openModal('taskModal'); }
 function saveTask(event) { event.preventDefault(); const id = $('#taskId').value; const title = $('#taskName').value.trim(); const subjectId = $('#taskSubject').value; const topicId = $('#taskTopic').value; if (!title || !subjectId || !topicId) { toast('Hãy chọn môn học và chủ đề cho nhiệm vụ.'); return; } const task = { id: id || uid('task'), subjectId, topicId, title, minutes: Number($('#taskDuration').value), priority: Number($('#taskPriority').value), deadline: $('#taskDeadline').value || TODAY, status: id ? getTask(id).status : 'open', createdAt: id ? getTask(id).createdAt : TODAY }; const index = currentUser.tasks.findIndex(item => item.id === id); if (index >= 0) currentUser.tasks[index] = task; else currentUser.tasks.unshift(task); persist(); renderApp(); closeModal('taskModal'); toast(id ? 'Đã lưu thay đổi nhiệm vụ.' : 'Đã thêm nhiệm vụ và cập nhật lịch thông minh.'); }
-function deleteTask() { const id = $('#taskId').value; if (!id) return; currentUser.tasks = currentUser.tasks.filter(task => task.id !== id); persist(); renderApp(); closeModal('taskModal'); toast('Đã xoá nhiệm vụ.'); }
+function deleteTask() {
+  const id = $('#taskId').value;
+  if (!id) return;
+  currentUser.tasks = currentUser.tasks.filter(task => task.id !== id);
+  if (notificationScheduler) {
+    try { notificationScheduler.handleItemDeleted('task', id); } catch (e) {}
+  }
+  persist();
+  renderApp();
+  closeModal('taskModal');
+  toast('Đã xoá nhiệm vụ.');
+}
 
 function openSubjectModal(subject = null) { $('#subjectModalTitle').textContent = subject ? 'Chỉnh sửa môn học' : 'Thêm môn học'; $('#subjectId').value = subject?.id || ''; $('#subjectName').value = subject?.name || ''; $('#subjectTarget').value = subject?.target || ''; $('#subjectFirstTopic').value = ''; $('#subjectFirstTopic').parentElement.hidden = Boolean(subject); $('#deleteSubjectButton').hidden = !subject; openModal('subjectModal'); }
 function saveSubject(event) { event.preventDefault(); const id = $('#subjectId').value; const name = $('#subjectName').value.trim(); if (!name) return; if (id) { const subject = getSubject(id); subject.name = name; subject.target = $('#subjectTarget').value.trim(); } else { const meta = SUBJECT_METADATA[name] || { color: 'custom', icon: name.slice(0, 1).toUpperCase() }; const firstTopic = $('#subjectFirstTopic').value.trim() || meta.defaultTopic; currentUser.subjects.push({ id: uid('subject'), name, target: $('#subjectTarget').value.trim(), color: meta.color, icon: meta.icon, topics: firstTopic ? [{ id: uid('topic'), name: firstTopic, mastery: 50, quiz: {} }] : [] }); } persist(); renderApp(); closeModal('subjectModal'); toast(id ? 'Đã lưu môn học.' : 'Đã thêm môn học.'); }
@@ -1508,7 +2542,24 @@ function createFixedDraft() {
   const title = $('#fixedTitle').value.trim(); const start = $('#fixedStart').value; const end = $('#fixedEnd').value;
   return { title, start, end, type: $('#fixedType').value, flexible: $('#fixedFlexible').checked, days: selectedFixedDays() };
 }
-function expandFixedDraft(draft, changeId = null) { return draft.days.map(day => ({ id: uid('fixed'), title: draft.title, day, type: draft.type, start: draft.start, end: draft.end, flexible: draft.flexible, replacementChangeId: changeId })); }
+function expandFixedDraft(draft, changeId = null) {
+  return draft.days.map(day => ({
+    id: uid('fixed'),
+    title: draft.title,
+    day,
+    type: draft.type,
+    start: draft.start,
+    end: draft.end,
+    flexible: Boolean(draft.flexible),
+    replacementChangeId: changeId,
+    recurrence: {
+      frequency: 'WEEKLY',
+      interval: 1,
+      daysOfWeek: [day]
+    },
+    exceptions: []
+  }));
+}
 function overlaps(first, second) { return minFromTime(first.start) < minFromTime(second.end) && minFromTime(second.start) < minFromTime(first.end); }
 function allScheduleSlots() { const flexiblePlan = createPlan().plan.map(item => ({ id: `study-${item.id}`, title: item.title, day: 4, start: item.start, end: item.end, type: 'study', flexible: true, isStudyPlan: true })); return [...currentUser.fixedSchedules, ...flexiblePlan]; }
 function scheduleConflicts(entries, ignoreIds = []) { const slots = allScheduleSlots().filter(slot => !ignoreIds.includes(slot.id)); return entries.flatMap(entry => slots.filter(slot => Number(slot.day) === Number(entry.day) && overlaps(entry, slot)).map(slot => ({ entry, slot }))); }
@@ -1572,7 +2623,31 @@ function restoreOriginalSchedule(changeId) {
   if (conflicts.length) { const first = conflicts[0]; toast(`Lịch gốc vẫn trùng ${first.slot.title} ${first.slot.start}–${first.slot.end} ${dayNames[first.entry.day]}.`); return; }
   currentUser.fixedSchedules = currentUser.fixedSchedules.filter(item => !replacementIds.includes(item.id)); const restored = change.original.map(item => ({ ...item, id: uid('fixed'), restoredChangeId: changeId })); currentUser.fixedSchedules.push(...restored); change.status = 'original-restored'; change.restored = restored; persist(); renderApp(); toast('Đã hoàn tác về lịch gốc.');
 }
-function deleteFixed(id) { currentUser.fixedSchedules = currentUser.fixedSchedules.filter(event => event.id !== id); persist(); renderApp(); toast('Đã xoá lịch cố định.'); }
+function skipFixedOccurrence(seriesId, date) {
+  const event = currentUser.fixedSchedules.find(s => s.id === seriesId);
+  if (!event) return;
+  const targetDate = date || scheduleViewDate;
+  if (RecurrenceEngineUtil && RecurrenceEngineUtil.addSkipException) {
+    const updated = RecurrenceEngineUtil.addSkipException(event, targetDate);
+    const idx = currentUser.fixedSchedules.findIndex(s => s.id === seriesId);
+    if (idx >= 0) currentUser.fixedSchedules[idx] = updated;
+  }
+  if (notificationScheduler && currentUser?.settings?.reminders !== false) {
+    try { notificationScheduler.reconcile(currentUser); } catch (e) {}
+  }
+  persist();
+  renderApp();
+  toast(`Đã bỏ qua ca “${escapeHTML(event.title)}” vào ngày ${targetDate}.`);
+}
+function deleteFixed(id) {
+  currentUser.fixedSchedules = currentUser.fixedSchedules.filter(event => event.id !== id);
+  if (notificationScheduler) {
+    try { notificationScheduler.handleItemDeleted('event', id); } catch (e) {}
+  }
+  persist();
+  renderApp();
+  toast('Đã xoá lịch cố định.');
+}
 function openAvailability() { $('#availabilityStart').value = currentUser.availability.start; $('#availabilityEnd').value = currentUser.availability.end; $$('#availabilityDays button').forEach(button => button.classList.toggle('chosen', currentUser.availability.days.includes(Number(button.dataset.day)))); openModal('availabilityModal'); }
 function saveAvailability(event) { event.preventDefault(); const days = $$('#availabilityDays button.chosen').map(button => Number(button.dataset.day)); if (!days.length || minFromTime($('#availabilityEnd').value) <= minFromTime($('#availabilityStart').value)) { toast('Hãy chọn ít nhất một ngày và khung giờ hợp lệ.'); return; } currentUser.availability = { start: $('#availabilityStart').value, end: $('#availabilityEnd').value, days }; persist(); renderApp(); closeModal('availabilityModal'); toast('Đã lưu khung giờ rảnh và sắp lại các phiên linh hoạt.'); }
 function openProfile() { $('#profileName').value = currentUser.profile.name; $('#profileGrade').value = currentUser.profile.grade; $('#profileGoal').value = currentUser.profile.goal; $('#profileTimezone').value = currentUser.profile.timezone; openModal('profileModal'); }
@@ -1605,6 +2680,9 @@ function loginSuccess() {
   $('#appShell').hidden = false;
   activePage = 'home';
   renderApp();
+  if (notificationScheduler && currentUser) {
+    notificationScheduler.start(() => currentUser, 30000);
+  }
   if (!currentUser.onboarded) {
     resetOnboarding();
     openModal('onboardingModal');
@@ -1614,13 +2692,17 @@ function loginSuccess() {
 async function signIn(email, password) {
   const normEmail = email.trim().toLowerCase();
   try {
-    const { token, user } = await api('POST', '/login', { email: normEmail, password });
-    setToken(token);
+    // Server sets TB-auth-token HttpOnly cookie; response body has { ok, user } — no token.
+    const { user } = await api('POST', '/login', { email: normEmail, password });
     currentUser = user;
+    // Ensure we're not accidentally in offline mode
+    setOfflineSession(null);
+    localStorage.removeItem(STORAGE_LOCAL_CURRENT);
     saveLocalUser(user);
     loginSuccess();
   } catch (err) {
     if (err.message === 'OFFLINE_MODE') {
+      // Network unavailable — fall back to local demo accounts
       const accounts = getLocalAccounts();
       const account = accounts.find(item => item.email.toLowerCase() === normEmail && item.password === password);
       if (!account) {
@@ -1629,7 +2711,7 @@ async function signIn(email, password) {
         return;
       }
       currentUser = clone(account);
-      setToken('local-' + account.id);
+      setOfflineSession('local-' + account.id);
       localStorage.setItem(STORAGE_LOCAL_CURRENT, account.id);
       loginSuccess();
       return;
@@ -1638,9 +2720,18 @@ async function signIn(email, password) {
     $('#loginError').hidden = false;
   }
 }
-function logout() {
+
+async function logout() {
   if (timerRunning) toggleTimer();
-  setToken(null);
+  if (notificationScheduler) {
+    notificationScheduler.stop();
+  }
+  // Ask the server to clear the HttpOnly cookie
+  if (!isOfflineMode()) {
+    try { await api('POST', '/logout'); } catch { /* ignore — clear local state regardless */ }
+  }
+  // Always clear local offline state
+  setOfflineSession(null);
   localStorage.removeItem(STORAGE_LOCAL_CURRENT);
   currentUser = null;
   $('#appShell').hidden = true;
@@ -1720,8 +2811,10 @@ async function createProfile(event) {
   const password = $('#createPassword').value;
   const name = $('#createName').value.trim();
   try {
-    const { token, user } = await api('POST', '/register', { name, email, password });
-    setToken(token);
+    // Server sets TB-auth-token cookie; response body has { ok, user } — no token.
+    const { user } = await api('POST', '/register', { name, email, password });
+    setOfflineSession(null);
+    localStorage.removeItem(STORAGE_LOCAL_CURRENT);
     currentUser = user;
     saveLocalUser(user);
     closeModal('loginProfileModal');
@@ -1738,7 +2831,7 @@ async function createProfile(event) {
       newAcc.password = password;
       saveLocalUser(newAcc);
       currentUser = clone(newAcc);
-      setToken('local-' + newAcc.id);
+      setOfflineSession('local-' + newAcc.id);
       localStorage.setItem(STORAGE_LOCAL_CURRENT, newAcc.id);
       closeModal('loginProfileModal');
       loginSuccess();
@@ -1750,22 +2843,126 @@ async function createProfile(event) {
 }
 function exportData() { const blob = new Blob([JSON.stringify(currentUser, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `TB-${currentUser.profile.name.toLowerCase().replace(/\s+/g, '-')}.json`; link.click(); URL.revokeObjectURL(url); toast('Đã xuất bản sao lưu dữ liệu.'); }
 function resetDemo() { if (!window.confirm('Khôi phục dữ liệu mẫu? Các thay đổi của tài khoản hiện tại sẽ bị thay thế.')) return; const replacement = seedAccount(); replacement.id = currentUser.id; replacement.email = currentUser.email; currentUser = replacement; persist(); renderApp(); toast('Đã khôi phục dữ liệu mẫu cho tài khoản này.'); }
-function toggleNotification() { let popover = $('#notificationPopover'); if (!popover) { popover = document.createElement('aside'); popover.id = 'notificationPopover'; popover.className = 'notification-popover'; document.body.append(popover); } const review = currentUser.reviewSchedules.filter(item => item.status === 'scheduled' && item.due <= TODAY)[0]; const topic = review && getTopic(review.topicId); popover.innerHTML = `<h3>Nhắc học hôm nay</h3><p><b>${topic ? `Ôn lại ${escapeHTML(topic.name)}` : 'Kiểm tra lịch học'}</b><br>${topic ? 'Đúng lịch spaced repetition đã lưu.' : 'TB sẽ nhắc khi có phiên hoặc lịch ôn mới.'}</p><p><b>${openTasks().length} nhiệm vụ đang mở</b><br>Phiên quan trọng nhất đã được đưa lên đầu lịch.</p>`; popover.classList.toggle('open'); }
+function updateNotificationBadge() {
+  const notifBtn = $('#notificationButton');
+  if (!notifBtn) return;
+  const unreadCount = notificationStore ? notificationStore.getUnreadCount() : 0;
+  let badge = notifBtn.querySelector('.notification-badge-count');
+  let dot = notifBtn.querySelector('b');
 
-// Auto-login from saved token or local session
+  if (unreadCount > 0) {
+    if (dot) dot.style.display = 'none';
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'notification-badge-count';
+      notifBtn.appendChild(badge);
+    }
+    badge.textContent = unreadCount > 9 ? '9+' : String(unreadCount);
+    badge.style.display = 'block';
+  } else {
+    if (badge) badge.style.display = 'none';
+    if (dot) dot.style.display = '';
+  }
+}
+
+function renderNotificationPopover(popover) {
+  const notifs = notificationStore ? notificationStore.getAll(true) : [];
+  const unreadCount = notificationStore ? notificationStore.getUnreadCount() : 0;
+
+  const headerHtml = `
+    <div class="notification-popover-header">
+      <h3>Thông báo ${unreadCount > 0 ? `(${unreadCount} mới)` : ''}</h3>
+      ${notifs.length ? `<button type="button" class="notification-popover-clear" id="markAllReadBtn">Đã đọc tất cả</button>` : ''}
+    </div>
+  `;
+
+  let bodyHtml = '';
+  if (!notifs.length) {
+    // Fallback: Show today's quick summary
+    const review = currentUser?.reviewSchedules?.filter(item => item.status === 'scheduled' && item.due <= TODAY)[0];
+    const topic = review && getTopic(review.topicId);
+    bodyHtml = `
+      <div style="padding: 16px;">
+        <p style="margin: 0 0 8px; font-size: 11px; color: #555;">
+          <b>${topic ? `Ôn lại ${escapeHTML(topic.name)}` : 'Chưa có thông báo mới'}</b><br>
+          ${topic ? 'Đúng lịch spaced repetition đã lưu.' : 'TB sẽ nhắc khi sắp đến giờ học hoặc có bài quá hạn.'}
+        </p>
+        <p style="margin: 0; font-size: 10px; color: #888;">${openTasks().length} nhiệm vụ đang mở</p>
+      </div>
+    `;
+  } else {
+    bodyHtml = `<ul class="notification-popover-list">` + notifs.slice(0, 8).map(n => `
+      <li class="notification-popover-item ${n.read ? '' : 'unread'}" data-notif-id="${n.id}">
+        <div class="notification-popover-item-head">
+          <span>${n.sourceType ? n.sourceType.toUpperCase() : 'HỆ THỐNG'}</span>
+          <time>${DateUtil ? DateUtil.formatShortDate(n.createdAt.split('T')[0]) : ''}</time>
+        </div>
+        <p class="notification-popover-item-title">${escapeHTML(n.title)}</p>
+        <p class="notification-popover-item-msg">${escapeHTML(n.message)}</p>
+      </li>
+    `).join('') + `</ul>`;
+  }
+
+  popover.innerHTML = headerHtml + bodyHtml;
+
+  const markAllBtn = popover.querySelector('#markAllReadBtn');
+  if (markAllBtn) {
+    markAllBtn.addEventListener('click', () => {
+      if (notificationStore) {
+        notificationStore.markAllAsRead();
+        updateNotificationBadge();
+        renderNotificationPopover(popover);
+      }
+    });
+  }
+
+  popover.querySelectorAll('.notification-popover-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const id = item.dataset.notifId;
+      if (id && notificationStore) {
+        notificationStore.markAsRead(id);
+        updateNotificationBadge();
+        item.classList.remove('unread');
+      }
+    });
+  });
+}
+
+function toggleNotification() {
+  let popover = $('#notificationPopover');
+  if (!popover) {
+    popover = document.createElement('aside');
+    popover.id = 'notificationPopover';
+    popover.className = 'notification-popover';
+    document.body.append(popover);
+  }
+
+  renderNotificationPopover(popover);
+  popover.classList.toggle('open');
+}
+
+// Auto-login: try to resume a session from the HttpOnly cookie first,
+// then fall back to the offline session marker for demo/local accounts.
 (async function autoLogin() {
-  const token = getToken();
-  if (!token) return;
-
-  if (token.startsWith('local-')) {
-    const userId = token.replace(/^local-/, '');
+  // ── Offline/demo mode ────────────────────────────────────────────────────
+  const offlineSession = getOfflineSession();
+  if (offlineSession && offlineSession.startsWith('local-')) {
+    const userId = offlineSession.replace(/^local-/, '');
     const account = getLocalAccounts().find(a => a.id === userId);
     if (account) {
       currentUser = clone(account);
       loginSuccess();
+    } else {
+      // Session marker references a deleted account — clean up
+      setOfflineSession(null);
     }
     return;
   }
+
+  // ── Server/cookie mode ───────────────────────────────────────────────────
+  // Try to restore from the HttpOnly TB-auth-token cookie.
+  // credentials:'include' in api() ensures the cookie is sent.
+  if (window.location.protocol === 'file:') return; // no server in file:// mode
 
   try {
     const { user } = await api('GET', '/user');
@@ -1773,16 +2970,23 @@ function toggleNotification() { let popover = $('#notificationPopover'); if (!po
     saveLocalUser(user);
     loginSuccess();
   } catch (err) {
+    if (err.message === 'SESSION_EXPIRED') {
+      // Cookie expired or invalid — ensure it's cleared on the server too
+      try { await api('POST', '/logout'); } catch { /* ignore */ }
+      return; // show login screen
+    }
     if (err.message === 'OFFLINE_MODE') {
+      // Network unavailable — try to restore the last remembered local user
       const rememberedId = localStorage.getItem(STORAGE_LOCAL_CURRENT);
       const account = getLocalAccounts().find(a => a.id === rememberedId);
       if (account) {
         currentUser = clone(account);
+        setOfflineSession('local-' + account.id);
         loginSuccess();
-        return;
       }
+      return;
     }
-    setToken(null);
+    // Any other error (e.g. 5xx) — show login, do not clear anything
   }
 })();
 
@@ -1895,6 +3099,10 @@ document.addEventListener('click', event => {
   const topicEdit = event.target.closest('[data-edit-topic]'); if (topicEdit) openTopicModal(topicEdit.dataset.subjectId, getTopic(topicEdit.dataset.editTopic));
   const topicAdd = event.target.closest('[data-add-topic]'); if (topicAdd) openTopicModal(topicAdd.dataset.addTopic);
   const fixedDelete = event.target.closest('[data-delete-fixed]'); if (fixedDelete) deleteFixed(fixedDelete.dataset.deleteFixed);
+  const skipOccurrenceBtn = event.target.closest('[data-skip-occurrence]');
+  if (skipOccurrenceBtn) {
+    skipFixedOccurrence(skipOccurrenceBtn.dataset.skipOccurrence, skipOccurrenceBtn.dataset.occurrenceDate);
+  }
   const restoreSchedule = event.target.closest('[data-restore-schedule]'); if (restoreSchedule) restoreOriginalSchedule(restoreSchedule.dataset.restoreSchedule);
   const completeReviewButton = event.target.closest('[data-complete-review]'); if (completeReviewButton) completeReview(completeReviewButton.dataset.completeReview);
   const settingsAction = event.target.closest('[data-settings-action]'); if (settingsAction) { if (settingsAction.dataset.settingsAction === 'profile') openProfile(); if (settingsAction.dataset.settingsAction === 'availability') openAvailability(); if (settingsAction.dataset.settingsAction === 'subjects') showPage('subjects'); }
@@ -1955,6 +3163,103 @@ document.addEventListener('click', event => {
     parsedImportSlots.splice(idx, 1);
     renderImportPreview();
   }
+
+  /* Quick Capture & Inbox actions (PRODUCT UX PHASE 1) */
+  if (event.target.closest('#openQuickCaptureBtn, #todayQuickAddBtn, #inboxQuickAddBtn, #emptyInboxAddBtn, #fabQuickAdd')) {
+    openQuickCaptureModal();
+  }
+
+  const qcChip = event.target.closest('.qc-chip');
+  if (qcChip) {
+    syncQcChips(qcChip.dataset.dest);
+    updateQuickCapturePreview();
+  }
+
+  if (event.target.closest('#qcSubmitBtn')) {
+    submitQuickCapture();
+  }
+
+  if (event.target.closest('#startRecommendedBtn')) {
+    const btn = event.target.closest('#startRecommendedBtn');
+    const taskId = btn.dataset.taskId;
+    if (taskId) openStudy(taskId);
+  }
+
+  if (event.target.closest('#skipRecommendedBtn')) {
+    toast('Đã ghi nhận, bạn có thể chọn việc khác từ danh sách nhiệm vụ hoặc Hộp thư.');
+    showPage('inbox');
+  }
+
+  const inboxCheck = event.target.closest('[data-inbox-check]');
+  if (inboxCheck) {
+    const id = inboxCheck.dataset.inboxCheck;
+    const task = getTask(id);
+    if (task) {
+      task.status = task.status === 'done' ? 'open' : 'done';
+      persist();
+      renderApp();
+      toast(task.status === 'done' ? 'Đã hoàn thành việc trong Inbox!' : 'Đã mở lại công việc.');
+    }
+  }
+
+  const inboxSched = event.target.closest('[data-inbox-schedule]');
+  if (inboxSched) {
+    const id = inboxSched.dataset.inboxSchedule;
+    const task = getTask(id);
+    if (task) {
+      if (InboxServiceUtil) InboxServiceUtil.scheduleItem(task, TODAY);
+      else { task.scheduledDate = TODAY; task.deadline = TODAY; task.isInbox = false; }
+      persist();
+      renderApp();
+      toast(`Đã xếp "${task.title}" vào lịch Hôm nay!`, 'success');
+    }
+  }
+
+  const inboxTom = event.target.closest('[data-inbox-tomorrow]');
+  if (inboxTom) {
+    const id = inboxTom.dataset.inboxTomorrow;
+    const task = getTask(id);
+    if (task) {
+      const tom = DateUtil ? DateUtil.addAppDays(TODAY, 1) : TODAY;
+      if (InboxServiceUtil) InboxServiceUtil.scheduleItem(task, tom);
+      else { task.scheduledDate = tom; task.deadline = tom; task.isInbox = false; }
+      persist();
+      renderApp();
+      toast(`Đã xếp "${task.title}" vào lịch Ngày mai!`, 'success');
+    }
+  }
+
+  const inboxDel = event.target.closest('[data-inbox-delete]');
+  if (inboxDel) {
+    const id = inboxDel.dataset.inboxDelete;
+    if (confirm('Bạn có chắc muốn xóa công việc này khỏi Inbox?')) {
+      currentUser.tasks = (currentUser.tasks || []).filter(t => t.id !== id);
+      persist();
+      renderApp();
+      toast('Đã xóa công việc khỏi Inbox.', 'info');
+    }
+  }
+
+  if (event.target.closest('#planMyInboxBtn')) {
+    openPlanInboxModal();
+  }
+
+  if (event.target.closest('#confirmPlanInboxBtn')) {
+    applyProposedInboxPlan();
+  }
+
+  if (event.target.closest('#aiAskBtn')) {
+    handleAiAskSubmit();
+  }
+
+  if (event.target.closest('#confirmAiPlanBtn')) {
+    applyProposedAiPlan();
+  }
+});
+document.addEventListener('input', event => {
+  if (event.target.id === 'quickCaptureInput') {
+    updateQuickCapturePreview();
+  }
 });
 document.addEventListener('change', event => {
   if (event.target.id === 'importClassSelect') {
@@ -1970,16 +3275,52 @@ document.addEventListener('change', event => {
   if (event.target.id === 'coachToggle') { currentUser.settings.coach = event.target.checked; persist(); renderInsights(); renderSettings(); }
 });
 $$('.modal-backdrop').forEach(backdrop => backdrop.addEventListener('click', event => { if (event.target === backdrop) closeModal(backdrop.id); }));
-document.addEventListener('keydown', event => { if (event.key === 'Escape') { $$('.modal-backdrop.open').forEach(modal => closeModal(modal.id)); $('#notificationPopover')?.classList.remove('open'); } });
+document.addEventListener('keydown', event => {
+  if (event.target.id === 'quickCaptureInput' && event.key === 'Enter') {
+    event.preventDefault();
+    submitQuickCapture();
+    return;
+  }
+  if (event.target.id === 'aiAskInput' && event.key === 'Enter') {
+    event.preventDefault();
+    handleAiAskSubmit();
+    return;
+  }
+  if (event.key === 'Escape') {
+    $$('.modal-backdrop.open').forEach(modal => closeModal(modal.id));
+    $('#notificationPopover')?.classList.remove('open');
+    return;
+  }
+  const activeEl = document.activeElement;
+  const isInput = activeEl && (
+    activeEl.tagName === 'INPUT' ||
+    activeEl.tagName === 'TEXTAREA' ||
+    activeEl.tagName === 'SELECT' ||
+    activeEl.isContentEditable
+  );
+  if (!isInput) {
+    if (event.key === 'n' || event.key === 'N') {
+      event.preventDefault();
+      openQuickCaptureModal();
+      return;
+    }
+  }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+    event.preventDefault();
+    openQuickCaptureModal();
+    return;
+  }
+});
 
 // Schedule date navigation (‹ › buttons)
 document.addEventListener('click', event => {
   const nav = event.target.closest('.date-navigator button');
   if (!nav) return;
-  const d = new Date(scheduleViewDate + 'T12:00:00+07:00');
-  if (nav.textContent.trim() === '‹') d.setDate(d.getDate() - 1);
-  else d.setDate(d.getDate() + 1);
-  scheduleViewDate = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  if (nav.textContent.trim() === '‹') {
+    scheduleViewDate = DateUtil ? DateUtil.addAppDays(scheduleViewDate, -1) : scheduleViewDate;
+  } else {
+    scheduleViewDate = DateUtil ? DateUtil.addAppDays(scheduleViewDate, 1) : scheduleViewDate;
+  }
   renderSchedule();
 });
 

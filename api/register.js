@@ -1,8 +1,11 @@
+'use strict';
+
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { send, readBody, preflight } = require('../lib/http');
-const { signUser } = require('../lib/auth');
+const { signUser, serializeAuthCookie } = require('../lib/auth');
 const { findUserByEmail, createUser, safeUser } = require('../lib/user-repository');
+const { validateRegisterPayload } = require('../lib/validator');
 
 function defaultUser({ id, email, name, passwordHash }) {
   return {
@@ -19,19 +22,41 @@ function defaultUser({ id, email, name, passwordHash }) {
   };
 }
 
+/**
+ * POST /api/register
+ *
+ * Creates a new account, then sets an HttpOnly auth cookie.
+ * Returns { ok: true, user } — the token is NEVER returned in the response body.
+ *
+ * Vercel serverless function — also called by the local Express server bridge.
+ */
 module.exports = async function handler(req, res) {
   if (preflight(req, res)) return;
   if (req.method !== 'POST') return send(res, 405, { error: 'Method not allowed.' });
   try {
-    const { name, email, password } = await readBody(req);
-    const normalizedEmail = String(email || '').trim().toLowerCase();
-    if (!name || !normalizedEmail || !password) return send(res, 400, { error: 'Thiếu thông tin đăng ký.' });
-    if (password.length < 4) return send(res, 400, { error: 'Mật khẩu cần ít nhất 4 ký tự.' });
+    const body = await readBody(req);
+    const validation = validateRegisterPayload(body);
+    if (!validation.valid) return send(res, 400, { error: validation.error });
+
+    const { name, email, password } = validation;
+    const normalizedEmail = email.toLowerCase().trim();
     if (await findUserByEmail(normalizedEmail)) return send(res, 409, { error: 'Email đã tồn tại. Hãy đăng nhập hoặc dùng email khác.' });
-    const user = await createUser(defaultUser({ id: `user-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`, email: normalizedEmail, name: String(name).trim(), passwordHash: await bcrypt.hash(password, 12) }));
-    return send(res, 201, { token: signUser(user.id), user: safeUser(user) });
+
+    const user = await createUser(defaultUser({
+      id: `user-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+      email: normalizedEmail,
+      name: String(name).trim(),
+      passwordHash: await bcrypt.hash(password, 12),
+    }));
+
+    const token = signUser(user.id);
+
+    // Set the JWT as an HttpOnly cookie — it must NOT appear in the response body.
+    return send(res, 201, { ok: true, user: safeUser(user) }, {
+      setCookie: serializeAuthCookie(token),
+    });
   } catch (error) {
-    console.error('register failed', error);
-    return send(res, 400, { error: 'Dữ liệu không hợp lệ.' });
+    console.error('register failed', error.message);
+    return send(res, 500, { error: 'Lỗi hệ thống khi đăng ký.' });
   }
 };
