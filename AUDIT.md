@@ -176,15 +176,25 @@
   - **Verification:**
     - Automated security tests in `tests/server.test.js` covering email validation, auth rejection, route protection, security headers, XSS escaping, and safe image validation (155/155 tests green).
 
-### 14. Tests Gaps (Addressed in P0.1 - P0.6)
-- Expanded automated test coverage across 5 comprehensive test suites (155 tests total):
+### 14. Tests Gaps (Addressed in P0.1 - P1.2)
+- Expanded automated test coverage across 8 comprehensive test suites (243 tests total):
   - `tests/priority-engine.test.js`: Study planning and task priority logic.
   - `tests/date.test.js`: Centralized Vietnam timezone (UTC+7) calendar math.
   - `tests/notifications.test.js`: Notification engine, policies, deduplication, and accessible toast UI.
   - `tests/recurrence-integrity.test.js`: Recurrence engine, bounded expansion, occurrence exceptions, and resilient JSON storage recovery.
   - `tests/server.test.js`: Production-equivalent auth flows, cookie security, input validation, forbidden route protection, and XSS prevention.
+  - `tests/today-ux.test.js`: Today dashboard, quick capture NLP parser, inbox scheduling backlog.
+  - `tests/ai-foundation.test.js`: P1.1 AI intent schema, privacy-safe planner context, planning proposal validator, Gemini server provider, fallback provider.
+  - `tests/ai-planner.test.js`: P1.2 deterministic multi-task/multi-day scheduling engine, deadline urgency, capacity warnings, anti-fragmentation, quality scoring evaluator, calendar revision stale protection.
+
+### 15. AI Time Management Architecture (Implemented in P1.1 & P1.2)
+- **Zero Direct Mutation:** AI never mutates user calendar state directly. All changes flow through `PlanningProposal` -> Deterministic Validation -> Plan Quality Evaluation -> User Review / Edit -> Atomic Apply.
+- **Deterministic Temporal Engine:** All dates/times pinned to Vietnam timezone (`Asia/Ho_Chi_Minh` / UTC+7). Zero hardcoded fallback dates in production logic.
+- **Stale Proposal Invalidation:** Deterministic djb2 `calendarRevision` fingerprint computed on context. In-modal stale banner triggers if underlying calendar changes before applying.
+- **In-Modal Fine Tuning:** Per-action date/time edit controls with live client-side quality score recalculation.
+- **Notification Engine Dispatches:** Notifications triggered upon plan application.
 
 ## Open Questions for the User
 > [!NOTE]
-> All core P0 foundations (Auth, Date/Time UTC+7, Notifications, Recurrence/Integrity, and Security/XSS) are now fully implemented, verified, and passing 100% of automated tests with 0 audit vulnerabilities.
+> All P0 foundations, Product UX foundations, P1.1 AI Foundation, and P1.2 AI Planner & Smart Scheduling are now fully implemented, verified in production (Vercel), and passing 100% of automated tests (243/243 green).
 
