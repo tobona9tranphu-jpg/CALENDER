@@ -38,10 +38,13 @@
     if (task.deadline && AppDate && !AppDate.parseAppDate(task.deadline)) {
       return { valid: false, error: `Invalid task deadline: ${task.deadline}` };
     }
-    const minutes = Number(task.minutes);
+    const rawMin = task.minutes !== undefined ? task.minutes : (task.durationMinutes !== undefined ? task.durationMinutes : 45);
+    const minutes = Number(rawMin);
     if (isNaN(minutes) || minutes < 0 || minutes > 1440) {
-      return { valid: false, error: `Invalid task minutes: ${task.minutes}` };
+      return { valid: false, error: `Invalid task minutes: ${rawMin}` };
     }
+    if (task.minutes === undefined) task.minutes = minutes;
+    if (task.durationMinutes === undefined) task.durationMinutes = minutes;
     return { valid: true };
   }
 
@@ -57,12 +60,14 @@
       const recValid = RecurrenceEngine.validateRecurrenceRule(sched.recurrence);
       if (!recValid.valid) return recValid;
     } else {
-      // Legacy day check: 0 to 6
-      if (sched.day !== undefined) {
+      // Legacy day check: 0 to 6 (7 normalizes to 0 for Sunday)
+      if (sched.day !== undefined && sched.day !== null) {
         const day = Number(sched.day);
-        if (isNaN(day) || day < 0 || day > 6) {
+        const norm = day === 7 ? 0 : day;
+        if (isNaN(norm) || !Number.isInteger(norm) || norm < 0 || norm > 6) {
           return { valid: false, error: `Invalid weekday: ${sched.day}` };
         }
+        sched.day = norm;
       }
     }
 

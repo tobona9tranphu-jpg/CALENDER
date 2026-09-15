@@ -223,6 +223,22 @@
         proposal
       };
     }
+
+    async parseAssistantIntent(input, context = {}) {
+      const IntentRouterUtil = (typeof IntentRouter !== 'undefined' && IntentRouter)
+        ? IntentRouter
+        : (typeof require === 'function' ? require('./intent-router') : null);
+
+      if (IntentRouterUtil && IntentRouterUtil.classifyDeterministic) {
+        return {
+          status: 'SUCCESS',
+          source: 'deterministic',
+          intent: IntentRouterUtil.classifyDeterministic(input, context)
+        };
+      }
+      return { status: 'ERROR', error: 'IntentRouter not found' };
+    }
+
   }
 
   /**
@@ -368,6 +384,82 @@ Trả về duy nhất JSON:
         return { status: err.name === 'AbortError' ? 'TIMEOUT' : 'ERROR', error: err.message };
       }
     }
+
+    async parseAssistantIntent(input, context = {}) {
+      if (!this.apiKey) {
+        return { status: 'NOT_CONFIGURED', error: 'Máy chủ chưa cấu hình GEMINI_API_KEY.' };
+      }
+
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
+
+      const systemInstruction = `Bạn là Trợ lý Thời gian AI thông minh (AI Time Assistant) cho học sinh.
+Nhiệm vụ: Phân loại câu nói của học sinh vào ĐÚNG 1 trong 9 ý định sau:
+1. "plan": Sắp xếp / lên lịch học môn mới
+2. "reschedule": Dời / đổi giờ ca học
+3. "fix_day": Lịch bị rối, quá tải, xung đột
+4. "review_day": Đánh giá, tổng kết hôm nay
+5. "review_week": Đánh giá, tổng kết tuần
+6. "capture_task": Thêm bài tập / ghi chú việc cần làm
+7. "find_time": Tìm khoảng trống rảnh
+8. "deadline_help": Quản lý hạn chót, bài tập sắp đến hạn
+9. "explain_schedule": Giải thích tại sao lịch dày, bận rộn
+
+Trả về JSON duy nhất theo schema:
+{
+  "intent": "plan" | "reschedule" | "fix_day" | "review_day" | "review_week" | "capture_task" | "find_time" | "deadline_help" | "explain_schedule",
+  "confidence": 0.95,
+  "entities": {
+    "subject": "Toán" | null,
+    "taskTitle": "Học Toán" | null,
+    "durationMinutes": 120 | null,
+    "date": "YYYY-MM-DD" | null,
+    "targetTime": "HH:mm" | null,
+    "timePreference": "morning" | "afternoon" | "evening" | null,
+    "deadlineDate": "YYYY-MM-DD" | null,
+    "priority": 3
+  },
+  "constraints": []
+}
+Ngày hiện tại: ${context.currentDate || new Date().toISOString().slice(0, 10)}.`;
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: systemInstruction }] },
+            contents: [{ role: 'user', parts: [{ text: input }] }],
+            generationConfig: { temperature: 0, responseMimeType: 'application/json' }
+          })
+        });
+
+        clearTimeout(timer);
+
+        if (!response.ok) {
+          return { status: 'UNAVAILABLE', error: `Gemini API returned HTTP ${response.status}` };
+        }
+
+        const data = await response.json();
+        const text = data?.candidates?.[0]?.content?.parts?.find(p => typeof p.text === 'string')?.text;
+        if (!text) {
+          return { status: 'MALFORMED_OUTPUT', error: 'Empty candidate from Gemini.' };
+        }
+
+        const parsed = JSON.parse(text);
+        return { status: 'SUCCESS', source: 'ai', intent: parsed };
+      } catch (err) {
+        clearTimeout(timer);
+        const isTimeout = err.name === 'AbortError';
+        return {
+          status: isTimeout ? 'TIMEOUT' : 'ERROR',
+          error: isTimeout ? 'Yêu cầu AI quá thời gian (timeout).' : err.message
+        };
+      }
+    }
   }
 
   /**
@@ -472,6 +564,50 @@ Trả về duy nhất JSON:
         return this.fallback.generatePlan(input, context);
       }
     }
+
+    async parseAssistantIntent(input, context = {}) {
+      if (typeof window !== 'undefined' && (window.location.protocol === 'file:' || (typeof isOfflineMode === 'function' && isOfflineMode()))) {
+        return this.fallback.parseAssistantIntent(input, context);
+      }
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+      try {
+        const response = await fetch(this.apiEndpoint, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
+          body: JSON.stringify({
+            action: 'ask_assistant',
+            input,
+            context
+          })
+        });
+
+        clearTimeout(timer);
+
+        if (!response.ok) {
+          return this.fallback.parseAssistantIntent(input, context);
+        }
+
+        const data = await response.json();
+        if (data.ok && data.intent) {
+          return {
+            status: 'SUCCESS',
+            source: data.source || 'ai',
+            intent: data.intent
+          };
+        }
+
+        return this.fallback.parseAssistantIntent(input, context);
+      } catch {
+        clearTimeout(timer);
+        return this.fallback.parseAssistantIntent(input, context);
+      }
+    }
+
   }
 
   return {

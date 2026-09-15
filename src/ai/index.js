@@ -2,19 +2,13 @@
 
 /**
  * @file index.js
- * Unified entry point for AI Time Management System (P1.1, P1.2, P1.3).
+ * Unified entry point for AI Time Management System (P1.1, P1.2, P1.3, P1.4, P1.5).
  *
  * Exposes:
- * - IntentSchema (createIntent, validateIntent, needsClarification)
- * - PlannerContext (buildPlanningContext, canonicalizePlanningContext, computePlanningContextRevision, computeCalendarRevision, isContextSanitized)
- * - PlanningProposal (createPlanningProposal, validatePlanningProposal)
- * - AIProvider (AIProvider, PlaceholderAIProvider, DeterministicFallbackProvider, GeminiServerProvider, ClientAIAdapter)
- * - PlannerEngine (scheduleTasks, getFreeSlots, totalFreeMinutes, buildCapacityWarning)
- * - PlanEvaluator (evaluatePlanQuality, evaluateRescheduleComparison)
- * - ConflictIntelligence (detectConflicts) [P1.3]
- * - ScheduleDrift (analyzeScheduleDrift) [P1.3]
- * - DeadlineIntelligence (evaluateDeadlineRisks, formatDurationVi) [P1.3]
- * - RescheduleEngine (generateReschedulePlan) [P1.3]
+ * - IntentSchema, PlannerContext, PlanningProposal, AIProvider, PlannerEngine, PlanEvaluator
+ * - ConflictIntelligence, CapacityEngine, ScheduleDrift, DeadlineIntelligence, RescheduleEngine, DayFixEngine
+ * - ExecutionTracker, PatternDetector, AdaptiveLearning [P1.4]
+ * - IntentRouter, ContextAssembly, CapabilityRouter, AssistantConversation, TimeAssistant [P1.5]
  */
 
 (function (root, factory) {
@@ -26,9 +20,19 @@
     const PlannerEngine = require('./planner-engine');
     const PlanEvaluator = require('./plan-evaluator');
     const ConflictIntelligence = require('./conflict-intelligence');
+    const CapacityEngine = require('./capacity-engine');
     const ScheduleDrift = require('./schedule-drift');
     const DeadlineIntelligence = require('./deadline-intelligence');
     const RescheduleEngine = require('./reschedule-engine');
+    const DayFixEngine = require('./day-fix-engine');
+    const ExecutionTracker = require('../execution/execution-tracker');
+    const PatternDetector = require('../execution/pattern-detector');
+    const AdaptiveLearning = require('../execution/adaptive-learning');
+    const IntentRouter = require('./intent-router');
+    const ContextAssembly = require('./context-assembly');
+    const CapabilityRouter = require('./capability-router');
+    const AssistantConversation = require('./assistant-conversation');
+    const TimeAssistant = require('./time-assistant');
     module.exports = factory(
       IntentSchema,
       PlannerContext,
@@ -37,9 +41,19 @@
       PlannerEngine,
       PlanEvaluator,
       ConflictIntelligence,
+      CapacityEngine,
       ScheduleDrift,
       DeadlineIntelligence,
-      RescheduleEngine
+      RescheduleEngine,
+      DayFixEngine,
+      ExecutionTracker,
+      PatternDetector,
+      AdaptiveLearning,
+      IntentRouter,
+      ContextAssembly,
+      CapabilityRouter,
+      AssistantConversation,
+      TimeAssistant
     );
   } else {
     root.AIFoundation = factory(
@@ -50,9 +64,19 @@
       root.PlannerEngine,
       root.PlanEvaluator,
       root.ConflictIntelligence,
+      root.CapacityEngine,
       root.ScheduleDrift,
       root.DeadlineIntelligence,
-      root.RescheduleEngine
+      root.RescheduleEngine,
+      root.DayFixEngine,
+      root.ExecutionTracker,
+      root.PatternDetector,
+      root.AdaptiveLearning,
+      root.IntentRouter,
+      root.ContextAssembly,
+      root.CapabilityRouter,
+      root.AssistantConversation,
+      root.TimeAssistant
     );
   }
 }(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this), function (
@@ -63,9 +87,19 @@
   PlannerEngine,
   PlanEvaluator,
   ConflictIntelligence,
+  CapacityEngine,
   ScheduleDrift,
   DeadlineIntelligence,
-  RescheduleEngine
+  RescheduleEngine,
+  DayFixEngine,
+  ExecutionTracker,
+  PatternDetector,
+  AdaptiveLearning,
+  IntentRouter,
+  ContextAssembly,
+  CapabilityRouter,
+  AssistantConversation,
+  TimeAssistant
 ) {
   return {
     ...IntentSchema,
@@ -75,9 +109,19 @@
     ...PlannerEngine,
     ...PlanEvaluator,
     ...ConflictIntelligence,
+    ...CapacityEngine,
     ...ScheduleDrift,
     ...DeadlineIntelligence,
     ...RescheduleEngine,
+    ...DayFixEngine,
+    ...(ExecutionTracker || {}),
+    ...(PatternDetector || {}),
+    ...(AdaptiveLearning || {}),
+    ...(IntentRouter || {}),
+    ...(ContextAssembly || {}),
+    ...(CapabilityRouter || {}),
+    ...(AssistantConversation || {}),
+    ...(TimeAssistant || {}),
     IntentSchema,
     PlannerContext,
     PlanningProposal,
@@ -85,8 +129,18 @@
     PlannerEngine,
     PlanEvaluator,
     ConflictIntelligence,
+    CapacityEngine,
     ScheduleDrift,
     DeadlineIntelligence,
-    RescheduleEngine
+    RescheduleEngine,
+    DayFixEngine,
+    ExecutionTracker,
+    PatternDetector,
+    AdaptiveLearning,
+    IntentRouter,
+    ContextAssembly,
+    CapabilityRouter,
+    AssistantConversation,
+    TimeAssistant
   };
 }));

@@ -73,8 +73,8 @@ module.exports = async function handler(req, res) {
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      // Return 200 with ok: false and status: NOT_CONFIGURED so client fallback kicks in
-      return send(res, 200, {
+      // 503 Service Unavailable — server is not configured to handle AI requests
+      return send(res, 503, {
         ok: false,
         status: 'NOT_CONFIGURED',
         message: 'Máy chủ chưa cấu hình GEMINI_API_KEY.'
@@ -116,6 +116,28 @@ module.exports = async function handler(req, res) {
         source: 'deterministic',
         fallbackReason: result.status,
         proposal: fallbackResult.proposal
+      });
+    }
+
+    if (action === 'ask_assistant') {
+      let result = null;
+      if (provider && typeof provider.parseAssistantIntent === 'function') {
+        try {
+          result = await provider.parseAssistantIntent(input, sanitizedContext);
+        } catch (e) {
+          result = { status: 'ERROR', error: e.message };
+        }
+      }
+      if (result && result.status === 'SUCCESS') {
+        return send(res, 200, { ok: true, source: 'ai', intent: result.intent });
+      }
+      // Fall back to deterministic intent parser
+      const fallbackResult = await fallback.parseAssistantIntent(input, sanitizedContext);
+      return send(res, 200, {
+        ok: true,
+        source: 'deterministic',
+        fallbackReason: result ? result.status : 'FALLBACK',
+        intent: fallbackResult ? fallbackResult.intent : null
       });
     }
 

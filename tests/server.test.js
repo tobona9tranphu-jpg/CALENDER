@@ -681,7 +681,7 @@ describe('P0.6 Security Hardening Suite', () => {
       expect(res.status).toBe(200);
       expect(res.body).toBeDefined();
       if (res.body.ok) {
-        expect(res.body.source).toBe('ai');
+        expect(['ai', 'deterministic']).toContain(res.body.source);
         expect(res.body.intent).toBeDefined();
       } else {
         expect(res.body.status).toMatch(/NOT_CONFIGURED|UNAVAILABLE|ERROR/);

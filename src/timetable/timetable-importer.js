@@ -71,6 +71,70 @@
   }
 
   /**
+   * Canonical helper to map any timetable day representation into standard app day:
+   * 0 = Chủ nhật, 1 = Thứ 2, 2 = Thứ 3, 3 = Thứ 4, 4 = Thứ 5, 5 = Thứ 6, 6 = Thứ 7.
+   */
+  function parseTimetableDayToAppDay(input) {
+    if (input === null || input === undefined || input === '') return 1;
+    if (typeof input === 'number') {
+      if (input === 7 || input === 8 || input === 0) return 0;
+      if (input >= 1 && input <= 6) return input;
+    }
+    const str = String(input).trim().toLowerCase();
+    // Sunday variants (CN, Chủ nhật, T8, 8, 7, 0)
+    if (str.includes('chủ nhật') || str.includes('chu nhat') || str === 'cn' || str === 'cn.' || str === 't8' || str === '8' || str === '7' || str === '0') return 0;
+    // Monday variants (Thứ 2, T2, 1)
+    if (str.includes('thứ 2') || str.includes('thu 2') || str.includes('hai') || str === 't2' || str === '1') return 1;
+    // Tuesday variants (Thứ 3, T3, 2)
+    if (str.includes('thứ 3') || str.includes('thu 3') || str.includes('ba') || str === 't3' || str === '2') return 2;
+    // Wednesday variants (Thứ 4, T4, 3)
+    if (str.includes('thứ 4') || str.includes('thu 4') || str.includes('tư') || str.includes('tu') || str === 't4' || str === '3') return 3;
+    // Thursday variants (Thứ 5, T5, 4)
+    if (str.includes('thứ 5') || str.includes('thu 5') || str.includes('năm') || str.includes('nam') || str === 't5' || str === '4') return 4;
+    // Friday variants (Thứ 6, T6, 5)
+    if (str.includes('thứ 6') || str.includes('thu 6') || str.includes('sáu') || str.includes('sau') || str === 't6' || str === '5') return 5;
+    // Saturday variants (Thứ 7, T7, Thứ bảy, 6)
+    if (str.includes('thứ 7') || str.includes('thu 7') || str.includes('bảy') || str.includes('bay') || str === 't7' || str === '6') return 6;
+
+    const match = str.match(/\d+/);
+    if (match) {
+      const n = parseInt(match[0], 10);
+      if (n === 8 || n === 0 || n === 7) return 0;
+      if (n >= 1 && n <= 6) return n;
+    }
+    return 1;
+  }
+
+  /**
+   * Normalizes an imported slot at the system boundary to guarantee day is 0..6 integer
+   * and start/end times are formatted.
+   */
+  function normalizeImportedSlot(slot) {
+    if (!slot || typeof slot !== 'object') return slot;
+    const day = parseTimetableDayToAppDay(slot.day);
+    let start = slot.start ? String(slot.start).trim() : '';
+    let end = slot.end ? String(slot.end).trim() : '';
+    if (/^\d:[0-5]\d$/.test(start)) start = '0' + start;
+    if (/^\d:[0-5]\d$/.test(end)) end = '0' + end;
+
+    const period = Number(slot.period || slot.periodStart) || null;
+    if ((!start || !end) && period) {
+      const pTime = getPeriodTime(period);
+      if (pTime) {
+        start = start || pTime.start;
+        end = end || pTime.end;
+      }
+    }
+
+    return {
+      ...slot,
+      day,
+      start,
+      end
+    };
+  }
+
+  /**
    * Reconstructs a 2D logical grid from raw DOCX table XML string.
    * Resolves <w:gridSpan w:val="N"/> (horizontal span) and <w:vMerge> (vertical merge).
    */
@@ -340,20 +404,38 @@
       else if (lower.includes('thứ 6') || lower === 't6' || lower === '6') { currentDay = 5; continue; }
       else if (lower.includes('thứ 7') || lower === 't7' || lower === '7') { currentDay = 6; continue; }
 
-      // Check pipe format: period|subject|start|end|teacher
+      // Check pipe format: period|subject|start|end|teacher OR day|subject|start|end|teacher
       if (line.includes('|')) {
         hasPipeLines = true;
         const parts = line.split('|').map(p => p.trim());
-        const periodNum = parseInt(parts[0], 10);
-        const subjectStr = parts[1] || '';
-        let startTime = parts[2] || '';
-        let endTime = parts[3] || '';
-        const teacherStr = parts[4] || '';
+        const p0Lower = parts[0].toLowerCase();
+        const isDayFirst = ['t2','t3','t4','t5','t6','t7','cn','chủ nhật','chu nhat','thứ 2','thứ 3','thứ 4','thứ 5','thứ 6','thứ 7'].some(k => p0Lower === k || p0Lower.includes(k));
+
+        let slotDay = currentDay;
+        let periodNum = null;
+        let subjectStr = '';
+        let startTime = '';
+        let endTime = '';
+        let teacherStr = '';
+
+        if (isDayFirst) {
+          slotDay = parseTimetableDayToAppDay(parts[0]);
+          subjectStr = parts[1] || '';
+          startTime = parts[2] || '';
+          endTime = parts[3] || '';
+          teacherStr = parts[4] || '';
+        } else {
+          periodNum = parseInt(parts[0], 10);
+          subjectStr = parts[1] || '';
+          startTime = parts[2] || '';
+          endTime = parts[3] || '';
+          teacherStr = parts[4] || '';
+        }
 
         if (!subjectStr) continue;
 
         // If time is omitted but period is provided, resolve from profile
-        if (!startTime || !endTime) {
+        if ((!startTime || !endTime) && Number.isInteger(periodNum)) {
           const profile = getPeriodTime(periodNum);
           if (profile) {
             startTime = startTime || profile.start;
@@ -365,7 +447,7 @@
         if (!parsed) continue;
 
         slots.push({
-          day: currentDay,
+          day: slotDay,
           period: Number.isInteger(periodNum) && periodNum > 0 ? periodNum : null,
           title: parsed.title,
           subjectGroup: parsed.subjectGroup,
@@ -391,8 +473,8 @@
    */
   function isDuplicateScheduleEntry(existing, incoming) {
     if (!existing || !incoming) return false;
-    const dayA = Number(existing.day) === 7 ? 0 : Number(existing.day);
-    const dayB = Number(incoming.day) === 7 ? 0 : Number(incoming.day);
+    const dayA = parseTimetableDayToAppDay(existing.day);
+    const dayB = parseTimetableDayToAppDay(incoming.day);
     if (dayA !== dayB) return false;
 
     const startA = (existing.start || '').trim();
@@ -447,7 +529,7 @@
       const slotWarnings = [];
 
       // 1. Validate Day
-      const day = Number(slot.day);
+      const day = parseTimetableDayToAppDay(slot.day);
       if (!Number.isInteger(day) || day < 0 || day > 6) {
         slotErrors.push(`Ngày không hợp lệ (${slot.day}).`);
       }
@@ -475,7 +557,8 @@
       // 4. Check internal overlap with other slots in the same batch
       slots.forEach((other, oIdx) => {
         if (oIdx === idx) return;
-        if (Number(other.day) === day && slot.start && slot.end && other.start && other.end) {
+        const otherDay = parseTimetableDayToAppDay(other.day);
+        if (otherDay === day && slot.start && slot.end && other.start && other.end) {
           if (TIME_PATTERN.test(slot.start) && TIME_PATTERN.test(slot.end) && TIME_PATTERN.test(other.start) && TIME_PATTERN.test(other.end)) {
             const s1 = timeToMinutes(slot.start);
             const e1 = timeToMinutes(slot.end);
@@ -529,6 +612,8 @@
     isDuplicateScheduleEntry,
     dedupeScheduleEntries,
     validateImportSlots,
-    timeToMinutes
+    timeToMinutes,
+    parseTimetableDayToAppDay,
+    normalizeImportedSlot
   };
 }));

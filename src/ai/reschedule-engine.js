@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 /**
  * @file reschedule-engine.js
@@ -330,6 +330,14 @@
 
   return {
     generateReschedulePlan,
+    analyzeDay: function(d, c, o) {
+      const dfe = (typeof DayFixEngine !== 'undefined' ? DayFixEngine : (typeof require === 'function' ? require('./day-fix-engine') : null));
+      return dfe ? dfe.analyzeDay(d, c, o) : null;
+    },
+    fixDay: function(d, c, o) {
+      const dfe = (typeof DayFixEngine !== 'undefined' ? DayFixEngine : (typeof require === 'function' ? require('./day-fix-engine') : null));
+      return dfe ? dfe.fixDay(d, c, o) : null;
+    },
     _minFromTime: minFromTime,
     _timeFromMin: timeFromMin,
     _addDays: addDays,

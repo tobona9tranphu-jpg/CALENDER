@@ -44,6 +44,14 @@
   }
 
   /**
+   * Returns current Date instant in Vietnam timezone context.
+   * @returns {Date}
+   */
+  function getNowVietnam() {
+    return new Date();
+  }
+
+  /**
    * Returns today's date in Vietnam time as 'YYYY-MM-DD'.
    * Independent of client machine's local timezone.
    *
@@ -488,6 +496,26 @@
     return cells;
   }
 
+  /**
+   * Returns the current wall-clock time in Vietnam timezone as 'HH:mm'.
+   * Uses Intl.DateTimeFormat so it is independent of the host machine timezone.
+   *
+   * @param {Date} [nowInstant] - Optional date instant (defaults to new Date())
+   * @returns {string} 'HH:mm' e.g. '14:35'
+   */
+  function getCurrentAppTime(nowInstant) {
+    const now = nowInstant instanceof Date ? nowInstant : new Date();
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: APP_TIMEZONE,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(now);
+    const h = (parts.find(p => p.type === 'hour') || {}).value || '00';
+    const m = (parts.find(p => p.type === 'minute') || {}).value || '00';
+    return `${h}:${m}`;
+  }
+
   return {
     APP_TIMEZONE,
     APP_OFFSET_STR,
@@ -495,7 +523,9 @@
     DAY_NAMES_UPPER_VI,
     MONTH_NAMES_VI,
     getAppTimezone,
+    getNowVietnam,
     getTodayAppDate,
+    getCurrentAppTime,
     parseAppDate,
     addAppDays,
     diffAppCalendarDays,

@@ -5,11 +5,10 @@ const { getUserId } = require('../../lib/auth');
 /**
  * requireAuth middleware
  *
- * Must be used AFTER cookieToHeader so that req.headers.authorization is
- * populated from the cookie.
+ * Reads the HttpOnly TB-auth-token cookie via getUserId() and validates the JWT.
  *
  * Returns 401 if:
- *  - No auth cookie was present (cookieToHeader sets no header → getUserId returns null)
+ *  - No auth cookie was present (getUserId returns null)
  *  - The JWT is expired, malformed, or signed with the wrong secret
  *
  * Attaches req.userId for downstream handlers (not currently used by legacy

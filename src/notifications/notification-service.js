@@ -102,10 +102,14 @@
       if (!notif) return null;
 
       // Evaluate delivery policy
-      const decision = evaluateDeliveryPolicy ? evaluateDeliveryPolicy(notif, {
+      const decision = (options.forceToast || notif.priority === (NotificationPriority?.CRITICAL || 'CRITICAL')) ? {
+        deliverToast: true,
+        deliverStore: true,
+        reason: 'Forced or CRITICAL delivery'
+      } : (evaluateDeliveryPolicy ? evaluateDeliveryPolicy(notif, {
         now: options.now || new Date(),
         quietHoursConfig: this.quietHours
-      }) : { deliverToast: true, deliverStore: true };
+      }) : { deliverToast: true, deliverStore: true });
 
       let stored = notif;
       if (this.store && decision.deliverStore) {
@@ -138,53 +142,53 @@
     /**
      * Shorthand for success notification.
      */
-    success(message, title = 'Thành công') {
+    success(message, title = 'Thành công', options = {}) {
       return this.notify({
         title,
         message,
         type: NotificationType.SYSTEM_FEEDBACK,
         severity: NotificationSeverity.SUCCESS,
         priority: NotificationPriority.LOW
-      });
+      }, options);
     }
 
     /**
      * Shorthand for error / danger notification.
      */
-    error(message, title = 'Lỗi') {
+    error(message, title = 'Lỗi', options = {}) {
       return this.notify({
         title,
         message,
         type: NotificationType.SYSTEM_FEEDBACK,
         severity: NotificationSeverity.DANGER,
         priority: NotificationPriority.HIGH
-      });
+      }, options);
     }
 
     /**
      * Shorthand for warning notification.
      */
-    warning(message, title = 'Lưu ý') {
+    warning(message, title = 'Lưu ý', options = {}) {
       return this.notify({
         title,
         message,
         type: NotificationType.SYSTEM_FEEDBACK,
         severity: NotificationSeverity.WARNING,
         priority: NotificationPriority.MEDIUM
-      });
+      }, options);
     }
 
     /**
      * Shorthand for info notification.
      */
-    info(message, title = 'Thông báo') {
+    info(message, title = 'Thông báo', options = {}) {
       return this.notify({
         title,
         message,
         type: NotificationType.SYSTEM_FEEDBACK,
         severity: NotificationSeverity.INFO,
         priority: NotificationPriority.LOW
-      });
+      }, options);
     }
   }
 

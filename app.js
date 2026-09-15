@@ -50,6 +50,18 @@ const ClientAIAdapterUtil = (typeof AIProvider !== 'undefined' && AIProvider.Cli
   ? AIProvider.ClientAIAdapter
   : (AIFoundationUtil && AIFoundationUtil.ClientAIAdapter ? AIFoundationUtil.ClientAIAdapter : null);
 
+const ExecutionTrackerUtil = (typeof ExecutionTracker !== 'undefined')
+  ? ExecutionTracker
+  : (typeof require === 'function' ? (function() { try { return require('./src/execution/execution-tracker'); } catch { return null; } })() : null);
+
+const PatternDetectorUtil = (typeof PatternDetector !== 'undefined')
+  ? PatternDetector
+  : (typeof require === 'function' ? (function() { try { return require('./src/execution/pattern-detector'); } catch { return null; } })() : null);
+
+const AdaptiveLearningUtil = (typeof AdaptiveLearning !== 'undefined')
+  ? AdaptiveLearning
+  : (typeof require === 'function' ? (function() { try { return require('./src/execution/adaptive-learning'); } catch { return null; } })() : null);
+
 function getLocalAccounts() {
   try {
     let list = null;
@@ -130,6 +142,19 @@ async function api(method, path, body = null) {
   return data;
 }
 
+function getFriendlyErrorMessage(err) {
+  if (!err) return 'Đã xảy ra lỗi không xác định.';
+  const msg = typeof err === 'string' ? err : (err.message || '');
+  if (msg === 'SESSION_EXPIRED') return 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.';
+  if (msg === 'OFFLINE_MODE') return 'Không thể kết nối máy chủ. Thay đổi được lưu cục bộ trên thiết bị.';
+  if (msg === 'FORBIDDEN') return 'Bạn không có quyền thực hiện thao tác này.';
+  if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('network')) {
+    return 'Lỗi kết nối mạng. Vui lòng kiểm tra đường truyền của bạn.';
+  }
+  return msg || 'Đã xảy ra lỗi. Vui lòng thử lại.';
+}
+
+
 // ── Notification Engine Foundation (P0.4) ──────────────────────────────────
 let notificationService = null;
 let notificationStore = null;
@@ -172,12 +197,52 @@ function getToday() {
   return DateUtil ? DateUtil.getTodayAppDate() : (new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date()));
 }
 let TODAY = getToday();
+if (typeof window !== 'undefined') window.TODAY = TODAY;
 let scheduleViewDate = TODAY;
 let calendarMonth = Number(TODAY.split('-')[1]) - 1;
 let calendarYear = Number(TODAY.split('-')[0]);
 const DEMO_EMAIL = 'minhanh@tb.demo';
 const DEMO_PASSWORD = 'demo123';
 const dayNames = (DateUtil && DateUtil.DAY_NAMES_VI) || ['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy'];
+
+function parseTimetableDayToAppDay(input) {
+  if (typeof TimetableImporter !== 'undefined' && TimetableImporter.parseTimetableDayToAppDay) {
+    return TimetableImporter.parseTimetableDayToAppDay(input);
+  }
+  if (input === null || input === undefined || input === '') return 1;
+  if (typeof input === 'number') {
+    if (input === 7 || input === 8 || input === 0) return 0;
+    if (input >= 1 && input <= 6) return input;
+  }
+  const str = String(input).trim().toLowerCase();
+  // Sunday variants (CN, Chủ nhật, T8, 8, 7, 0)
+  if (str.includes('chủ nhật') || str.includes('chu nhat') || str === 'cn' || str === 'cn.' || str === 't8' || str === '8' || str === '7' || str === '0') return 0;
+  // Monday variants (Thứ 2, T2, 1)
+  if (str.includes('thứ 2') || str.includes('thu 2') || str.includes('hai') || str === 't2' || str === '1') return 1;
+  // Tuesday variants (Thứ 3, T3, 2)
+  if (str.includes('thứ 3') || str.includes('thu 3') || str.includes('ba') || str === 't3' || str === '2') return 2;
+  // Wednesday variants (Thứ 4, T4, 3)
+  if (str.includes('thứ 4') || str.includes('thu 4') || str.includes('tư') || str.includes('tu') || str === 't4' || str === '3') return 3;
+  // Thursday variants (Thứ 5, T5, 4)
+  if (str.includes('thứ 5') || str.includes('thu 5') || str.includes('năm') || str.includes('nam') || str === 't5' || str === '4') return 4;
+  // Friday variants (Thứ 6, T6, 5)
+  if (str.includes('thứ 6') || str.includes('thu 6') || str.includes('sáu') || str.includes('sau') || str === 't6' || str === '5') return 5;
+  // Saturday variants (Thứ 7, T7, Thứ bảy, 6)
+  if (str.includes('thứ 7') || str.includes('thu 7') || str.includes('bảy') || str.includes('bay') || str === 't7' || str === '6') return 6;
+
+  const match = str.match(/\d+/);
+  if (match) {
+    const n = parseInt(match[0], 10);
+    if (n === 8 || n === 0 || n === 7) return 0;
+    if (n >= 1 && n <= 6) return n;
+  }
+  return 1;
+}
+
+function safeDayName(day) {
+  const norm = parseTimetableDayToAppDay(day);
+  return dayNames[norm] || dayNames[0] || 'Lịch';
+}
 
 const EXAM_COMBINATIONS = {
   'A00': ['Toán', 'Vật lí', 'Hóa học'],
@@ -203,6 +268,15 @@ const SUBJECT_METADATA = {
 };
 
 let currentUser = null;
+if (typeof window !== 'undefined') {
+  try {
+    Object.defineProperty(window, 'currentUser', {
+      get: () => currentUser,
+      set: val => { currentUser = val; },
+      configurable: true
+    });
+  } catch (e) {}
+}
 let activePage = 'home';
 let taskFilter = 'open';
 let onboardingStep = 1;
@@ -394,8 +468,9 @@ function persist() {
   clearTimeout(persistTimer);
   persistTimer = setTimeout(() => {
     if (isOfflineMode()) return; // skip server sync in demo/offline mode
-    api('PUT', '/user', currentUser).catch(() => {
-      // Ignored: local copy is already saved
+    api('PUT', '/user', currentUser).catch(error => {
+      console.error('[TIMETABLE PERSIST FAILED]', error);
+      toast('Đã lưu trên thiết bị. Đồng bộ máy chủ đang gặp sự cố.', 'warning');
     });
   }, 500);
 }
@@ -574,6 +649,7 @@ function renderCalendar() {
   $('#calendarDates').innerHTML = cells.map(c => `<span class="${c.muted ? 'muted' : ''} ${c.isToday ? 'today-date' : ''}">${c.day}</span>`).join('');
 }
 function renderHeader() {
+  if (!currentUser || !currentUser.profile) return;
   const name = escapeHTML(currentUser.profile.name);
   $('#headerDate').textContent = activePage === 'home' ? (DateUtil ? DateUtil.formatVietnameseDate(TODAY) : formatVietnameseDate(new Date())) : ({ inbox: 'UNSCHEDULED INBOX', schedule: 'SMART SCHEDULE', subjects: 'SUBJECTS & TOPICS', progress: 'LEARNING PROGRESS', tasks: 'LEARNING TASKS', insights: 'STUDY INSIGHTS', settings: 'YOUR SPACE' }[activePage] || 'TB');
   const titles = { home: `Chào ${name} <span>✦</span>`, inbox: 'Hộp thư việc cần làm', schedule: 'Kế hoạch học', subjects: 'Các môn học', progress: 'Tiến độ học', tasks: 'Nhiệm vụ', insights: 'Góc nhìn học tập', settings: 'Cài đặt' };
@@ -586,7 +662,7 @@ function renderHeader() {
 }
 function renderToday() {
   if (!currentUser) return;
-  const now = DateUtil ? DateUtil.getNowVietnam() : new Date();
+  const now = (DateUtil && DateUtil.getNowVietnam) ? DateUtil.getNowVietnam() : new Date();
   const userName = (currentUser.profile && currentUser.profile.name) ? currentUser.profile.name : 'bạn';
 
   // 1. Header Greeting & Date
@@ -814,6 +890,82 @@ function renderToday() {
   if (homeTimelineEl) {
     homeTimelineEl.innerHTML = todayHTML + (upcomingHTML ? `<div class="upcoming-section"><p class="eyebrow" style="margin-top:16px;margin-bottom:8px;font-weight:700;">SẮP TỚI</p>${upcomingHTML}</div>` : '');
   }
+
+  // P1.4: Render Today Execution Pulse Widget
+  renderTodayExecutionWidget();
+}
+
+/**
+ * P1.4: Renders the "Nhịp học & Thực hiện hôm nay" pulse widget on Home dashboard.
+ */
+function renderTodayExecutionWidget() {
+  const widget = $('#todayExecutionWidget');
+  if (!widget || !currentUser) return;
+
+  const now = (DateUtil && DateUtil.getNowVietnam) ? DateUtil.getNowVietnam() : new Date();
+  const curTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+  let report = null;
+  if (ExecutionTrackerUtil && typeof ExecutionTrackerUtil.analyzeExecution === 'function') {
+    report = ExecutionTrackerUtil.analyzeExecution(TODAY, { scheduledTasks: currentUser.tasks || [], currentDate: TODAY, currentTime: curTime });
+  }
+
+  const completedCount = report ? report.summary.completedTasks : (currentUser.tasks || []).filter(t => (t.scheduledDate === TODAY || t.date === TODAY) && (t.status === 'done' || t.status === 'completed')).length;
+  const totalCount = report ? report.summary.totalTasks : (currentUser.tasks || []).filter(t => t.scheduledDate === TODAY || t.date === TODAY).length;
+  const adherence = report ? report.metrics.adherenceRate : 100;
+  const variance = report ? report.metrics.avgDurationVarianceMinutes : 0;
+
+  const countEl = $('#tewCompletedCount');
+  if (countEl) countEl.textContent = `${completedCount}/${totalCount}`;
+  const adhEl = $('#tewAdherencePct');
+  if (adhEl) adhEl.textContent = `${adherence}%`;
+  const varEl = $('#tewVarianceMin');
+  if (varEl) varEl.textContent = `${variance >= 0 ? '+' : ''}${variance}p`;
+
+  // Active or upcoming task
+  const todayTasks = (currentUser.tasks || []).filter(t => t.scheduledDate === TODAY || t.date === TODAY);
+  const inProgressTask = todayTasks.find(t => t.status === 'in_progress');
+  const nextPlannedTask = todayTasks.find(t => t.status === 'planned' || t.status === 'open');
+
+  const badgeEl = $('#tewActiveBadge');
+  const titleEl = $('#tewActiveTitle');
+  const timeEl = $('#tewActiveTime');
+  const actionsEl = $('#tewActiveActions');
+
+  if (inProgressTask) {
+    if (badgeEl) { badgeEl.textContent = 'ĐANG THỰC HIỆN'; badgeEl.className = 'tew-badge in-progress'; }
+    if (titleEl) titleEl.textContent = inProgressTask.title;
+    if (timeEl) timeEl.textContent = `Bắt đầu lúc: ${inProgressTask.actualStart || inProgressTask.startTime || curTime}`;
+    if (actionsEl) {
+      actionsEl.innerHTML = `
+        <button type="button" class="primary-button small-btn" data-tew-complete="${escapeHTML(inProgressTask.id)}">✓ Hoàn thành</button>
+        <button type="button" class="text-button small-btn" data-tew-postpone="${escapeHTML(inProgressTask.id)}">⏩ Dời mai</button>
+      `;
+    }
+  } else if (nextPlannedTask) {
+    if (badgeEl) { badgeEl.textContent = 'TIẾP THEO'; badgeEl.className = 'tew-badge'; }
+    if (titleEl) titleEl.textContent = nextPlannedTask.title;
+    if (timeEl) timeEl.textContent = nextPlannedTask.startTime ? `${nextPlannedTask.startTime} – ${nextPlannedTask.endTime || ''}` : `${nextPlannedTask.durationMinutes || nextPlannedTask.minutes || 45}p`;
+    if (actionsEl) {
+      actionsEl.innerHTML = `
+        <button type="button" class="primary-button small-btn" data-tew-start="${escapeHTML(nextPlannedTask.id)}">▶ Bắt đầu</button>
+        <button type="button" class="outline-button small-btn" data-tew-complete="${escapeHTML(nextPlannedTask.id)}">✓ Xong nhanh</button>
+        <button type="button" class="text-button small-btn" data-tew-postpone="${escapeHTML(nextPlannedTask.id)}">⏩ Dời mai</button>
+      `;
+    }
+  } else if (todayTasks.length > 0 && completedCount === totalCount) {
+    if (badgeEl) { badgeEl.textContent = 'HOÀN THÀNH'; badgeEl.className = 'tew-badge completed'; }
+    if (titleEl) titleEl.textContent = 'Tuyệt vời! Bạn đã hoàn tất toàn bộ nhiệm vụ hôm nay 🎉';
+    if (timeEl) timeEl.textContent = '100% mục tiêu';
+    if (actionsEl) {
+      actionsEl.innerHTML = `<button type="button" class="outline-button small-btn" id="tewOpenReviewBtnInside">📊 Xem tổng kết ngày</button>`;
+    }
+  } else {
+    if (badgeEl) { badgeEl.textContent = 'LỊCH TRÌNH RẢNH'; badgeEl.className = 'tew-badge'; }
+    if (titleEl) titleEl.textContent = 'Không có bài tập nào cần làm ngay';
+    if (timeEl) timeEl.textContent = 'Thảnh thơi';
+    if (actionsEl) actionsEl.innerHTML = '';
+  }
 }
 
 function renderInbox() {
@@ -908,7 +1060,7 @@ function renderSchedule() {
   $('#fixedSchedulesList').innerHTML = currentUser.fixedSchedules.length ? currentUser.fixedSchedules.map(event => {
     const excCount = Array.isArray(event.exceptions) ? event.exceptions.length : 0;
     const excLabel = excCount > 0 ? `<span class="rec-exc-badge" title="${excCount} ngoại lệ">${excCount} ngoại lệ</span>` : '';
-    return `<article class="fixed-schedule-card"><button data-delete-fixed="${event.id}" aria-label="Xoá ${escapeHTML(event.title)}">×</button><p>${dayNames[event.day].toUpperCase()} · ${event.type === 'school' ? 'TRƯỜNG HỌC' : event.type === 'tutoring' ? 'HỌC THÊM' : 'CÁ NHÂN'} ${excLabel}</p><h3>${escapeHTML(event.title)}</h3><small>${event.start} – ${event.end}</small></article>`;
+    return `<article class="fixed-schedule-card"><button data-delete-fixed="${event.id}" aria-label="Xoá ${escapeHTML(event.title)}">×</button><p>${safeDayName(event.day).toUpperCase()} · ${event.type === 'school' ? 'TRƯỜNG HỌC' : event.type === 'tutoring' ? 'HỌC THÊM' : 'CÁ NHÂN'} ${excLabel}</p><h3>${escapeHTML(event.title)}</h3><small>${event.start} – ${event.end}</small></article>`;
   }).join('') : emptyHTML('Chưa có lịch cố định.');
   normalizeScheduleState();
   const existingHistory = $('#changeHistoryDynamic');
@@ -918,7 +1070,7 @@ function renderSchedule() {
     const history = document.createElement('section');
     history.id = 'changeHistoryDynamic';
     history.className = 'change-history';
-    history.innerHTML = `<div class="section-heading"><div><p class="eyebrow">THAY ĐỔI ĐÃ LƯU</p><h2>Lịch gốc và lịch thay thế</h2></div></div><div class="change-history-list">${activeChanges.map(change => { const original = change.original.map(item => `${dayNames[item.day]} ${item.start}–${item.end}`).join(', '); const replacement = (change.replacement || change.restored || []).map(item => `${dayNames[item.day]} ${item.start}–${item.end}`).join(', '); return `<article class="change-history-card"><span class="history-icon">↺</span><div><strong>${escapeHTML(change.original[0]?.title || 'Lịch đã thay đổi')}</strong><p>Gốc: ${escapeHTML(original)}<br>${change.status === 'replacement-active' ? `Thay thế: ${escapeHTML(replacement)}` : 'Đã khôi phục lịch gốc'}</p></div>${change.status === 'replacement-active' ? `<button class="soft-button" data-restore-schedule="${change.id}">Hoàn tác</button>` : '<span class="history-status">Đã hoàn tác</span>'}</article>`; }).join('')}</div>`;
+    history.innerHTML = `<div class="section-heading"><div><p class="eyebrow">THAY ĐỔI ĐÃ LƯU</p><h2>Lịch gốc và lịch thay thế</h2></div></div><div class="change-history-list">${activeChanges.map(change => { const original = change.original.map(item => `${safeDayName(item.day)} ${item.start}–${item.end}`).join(', '); const replacement = (change.replacement || change.restored || []).map(item => `${safeDayName(item.day)} ${item.start}–${item.end}`).join(', '); return `<article class="change-history-card"><span class="history-icon">↺</span><div><strong>${escapeHTML(change.original[0]?.title || 'Lịch đã thay đổi')}</strong><p>Gốc: ${escapeHTML(original)}<br>${change.status === 'replacement-active' ? `Thay thế: ${escapeHTML(replacement)}` : 'Đã khôi phục lịch gốc'}</p></div>${change.status === 'replacement-active' ? `<button class="soft-button" data-restore-schedule="${change.id}">Hoàn tác</button>` : '<span class="history-status">Đã hoàn tác</span>'}</article>`; }).join('')}</div>`;
     $('#fixedSchedulesList').insertAdjacentElement('afterend', history);
   }
 }
@@ -952,8 +1104,21 @@ function renderInsights() {
   const coach = insights[0]; $('#coachTitle').textContent = coach.title; $('#coachText').textContent = coach.body; $('#coachCard').style.display = currentUser.settings.coach ? '' : 'none';
 }
 function renderSettings() {
-  const subjectCount = currentUser.subjects.length; const availability = `${currentUser.availability.start} – ${currentUser.availability.end} · ${currentUser.availability.days.length} ngày/tuần`;
-  $('#settingsList').innerHTML = `<article><span class="settings-icon">◉</span><div><h3>Hồ sơ học tập</h3><p>${escapeHTML(currentUser.profile.name)} · ${escapeHTML(currentUser.profile.grade || 'Chưa chọn lớp')}</p><span class="settings-value">${escapeHTML(currentUser.profile.goal || 'Chưa đặt mục tiêu chính')}</span></div><button class="soft-button" data-settings-action="profile">Chỉnh sửa</button></article><article><span class="settings-icon">◷</span><div><h3>Khoảng thời gian tự học</h3><p>TB chỉ xếp phiên linh hoạt vào khoảng này</p><span class="settings-value">${availability}</span></div><button class="soft-button" data-settings-action="availability">Chỉnh sửa</button></article><article><span class="settings-icon">▦</span><div><h3>Môn học và chủ đề</h3><p>${subjectCount} môn · ${currentUser.subjects.reduce((sum, subject) => sum + subject.topics.length, 0)} chủ đề đang theo dõi</p><span class="settings-value">Cấu hình Knowledge Map</span></div><button class="soft-button" data-settings-action="subjects">Quản lý</button></article><article><span class="settings-icon">♢</span><div><h3>Nhắc lịch học</h3><p>Nhắc trước mỗi phiên học 10 phút</p><span class="settings-value">${currentUser.settings.reminders ? 'Đang bật' : 'Đang tắt'}</span></div><label class="switch"><input id="reminderToggle" type="checkbox" ${currentUser.settings.reminders ? 'checked' : ''}><span></span></label></article><article><span class="settings-icon">✦</span><div><h3>Study Coach</h3><p>Hiển thị insight rút ra từ dữ liệu đã lưu</p><span class="settings-value">${currentUser.settings.coach ? 'Đang bật' : 'Đang tắt'}</span></div><label class="switch"><input id="coachToggle" type="checkbox" ${currentUser.settings.coach ? 'checked' : ''}><span></span></label></article>`;
+  const subjectCount = currentUser.subjects.length;
+  const availability = `${currentUser.availability.start} – ${currentUser.availability.end} · ${currentUser.availability.days.length} ngày/tuần`;
+  const learnedPrefs = currentUser.settings?.learnedPreferences || {};
+  const isAdaptiveOn = learnedPrefs.enabled !== false;
+  const recsAppliedCount = (learnedPrefs.acceptedRecommendations || []).length;
+
+  $('#settingsList').innerHTML = `
+    <article><span class="settings-icon">◉</span><div><h3>Hồ sơ học tập</h3><p>${escapeHTML(currentUser.profile.name)} · ${escapeHTML(currentUser.profile.grade || 'Chưa chọn lớp')}</p><span class="settings-value">${escapeHTML(currentUser.profile.goal || 'Chưa đặt mục tiêu chính')}</span></div><button class="soft-button" data-settings-action="profile">Chỉnh sửa</button></article>
+    <article><span class="settings-icon">◷</span><div><h3>Khoảng thời gian tự học</h3><p>TB chỉ xếp phiên linh hoạt vào khoảng này</p><span class="settings-value">${availability}</span></div><button class="soft-button" data-settings-action="availability">Chỉnh sửa</button></article>
+    <article><span class="settings-icon">▦</span><div><h3>Môn học và chủ đề</h3><p>${subjectCount} môn · ${currentUser.subjects.reduce((sum, subject) => sum + subject.topics.length, 0)} chủ đề đang theo dõi</p><span class="settings-value">Cấu hình Knowledge Map</span></div><button class="soft-button" data-settings-action="subjects">Quản lý</button></article>
+    <article><span class="settings-icon">♢</span><div><h3>Nhắc lịch học</h3><p>Nhắc trước mỗi phiên học 10 phút</p><span class="settings-value">${currentUser.settings.reminders ? 'Đang bật' : 'Đang tắt'}</span></div><label class="switch"><input id="reminderToggle" type="checkbox" ${currentUser.settings.reminders ? 'checked' : ''}><span></span></label></article>
+    <article><span class="settings-icon">✦</span><div><h3>Study Coach</h3><p>Hiển thị insight rút ra từ dữ liệu đã lưu</p><span class="settings-value">${currentUser.settings.coach ? 'Đang bật' : 'Đang tắt'}</span></div><label class="switch"><input id="coachToggle" type="checkbox" ${currentUser.settings.coach ? 'checked' : ''}><span></span></label></article>
+    <article><span class="settings-icon">🧠</span><div><h3>Học hỏi thích ứng (Adaptive Learning)</h3><p>Tự động tối ưu đệm thời gian và hệ số dự toán theo thói quen thực tế</p><span class="settings-value">${isAdaptiveOn ? 'Đang bật' : 'Đang tắt'}</span></div><label class="switch"><input id="adaptiveLearningToggle" type="checkbox" ${isAdaptiveOn ? 'checked' : ''}><span></span></label></article>
+    <article><span class="settings-icon">↺</span><div><h3>Đặt lại thói quen đã học</h3><p>Khôi phục các hệ số dự toán về mặc định (giữ nguyên lịch sử học)</p><span class="settings-value">${recsAppliedCount} tinh chỉnh đã lưu</span></div><button class="soft-button" id="resetLearningBtn">Đặt lại thói quen</button></article>
+  `;
 }
 function emptyHTML(message) { return `<div class="empty-state">${escapeHTML(message)}</div>`; }
 
@@ -1069,29 +1234,53 @@ function deleteMilestone(id) {
 let currentNotePhotoData = null;
 
 function openTakeNoteModal() {
+  if (!currentUser.subjects || !currentUser.subjects.length) {
+    currentUser.subjects = currentUser.subjects || [];
+    currentUser.subjects.push({
+      id: uid('subject'),
+      name: 'Toán học',
+      target: 'Môn chính',
+      color: 'blue',
+      icon: 'T',
+      topics: [{ id: uid('topic'), name: 'Chủ đề chung', mastery: 50, quiz: {} }]
+    });
+    persist();
+  }
   const select = $('#takeNoteSubject');
-  select.innerHTML = currentUser.subjects.length
-    ? currentUser.subjects.map(s => `<option value="${s.id}">${escapeHTML(s.name)}</option>`).join('')
-    : '<option value="">(Chưa có môn học)</option>';
-  $('#takeNoteTopic').value = '';
-  $('#takeNoteContent').value = '';
-  $('#takeNoteUnderstanding').value = '3';
+  if (select) {
+    select.innerHTML = currentUser.subjects.map(s => `<option value="${s.id}">${escapeHTML(s.name)}</option>`).join('');
+  }
+  if ($('#takeNoteTopic')) $('#takeNoteTopic').value = '';
+  if ($('#takeNoteContent')) $('#takeNoteContent').value = '';
+  if ($('#takeNoteUnderstanding')) $('#takeNoteUnderstanding').value = '3';
   currentNotePhotoData = null;
-  $('#notePhotoInput').value = '';
-  $('#notePhotoImg').src = '';
-  $('#photoPlaceholder').hidden = false;
-  $('#photoPreviewContainer').hidden = true;
+  if ($('#notePhotoInput')) $('#notePhotoInput').value = '';
+  if ($('#notePhotoImg')) $('#notePhotoImg').src = '';
+  if ($('#photoPlaceholder')) $('#photoPlaceholder').hidden = false;
+  if ($('#photoPreviewContainer')) $('#photoPreviewContainer').hidden = true;
   openModal('takeNoteModal');
 }
 
 function processNotePhoto(file) {
-  if (!file || !file.type.startsWith('image/')) {
-    toast('Vui lòng chọn tệp hình ảnh (JPG, PNG, WebP).');
+  if (!file) return;
+  const ext = (file.name || '').split('.').pop().toLowerCase();
+  if (ext === 'heic' || ext === 'heif') {
+    toast('Định dạng ảnh HEIC hiện chưa được hỗ trợ trực tiếp. Vui lòng chụp hoặc lưu ảnh định dạng JPG, PNG hoặc WebP.', 'warning');
+    return;
+  }
+  if (!file.type.startsWith('image/') && !['png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
+    toast('Vui lòng chọn tệp hình ảnh (JPG, PNG, WebP).', 'warning');
     return;
   }
   const reader = new FileReader();
+  reader.onerror = () => {
+    toast('Không thể đọc tệp ảnh này.', 'error');
+  };
   reader.onload = (e) => {
     const img = new Image();
+    img.onerror = () => {
+      toast('Không thể giải mã hình ảnh này.', 'error');
+    };
     img.onload = () => {
       const maxDim = 800;
       let w = img.width;
@@ -1111,9 +1300,9 @@ function processNotePhoto(file) {
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, w, h);
       currentNotePhotoData = canvas.toDataURL('image/jpeg', 0.8);
-      $('#notePhotoImg').src = currentNotePhotoData;
-      $('#photoPlaceholder').hidden = true;
-      $('#photoPreviewContainer').hidden = false;
+      if ($('#notePhotoImg')) $('#notePhotoImg').src = currentNotePhotoData;
+      if ($('#photoPlaceholder')) $('#photoPlaceholder').hidden = true;
+      if ($('#photoPreviewContainer')) $('#photoPreviewContainer').hidden = false;
     };
     img.src = e.target.result;
   };
@@ -1121,66 +1310,80 @@ function processNotePhoto(file) {
 }
 
 function saveTakeNote(event) {
-  event.preventDefault();
-  const subjectId = $('#takeNoteSubject').value;
-  const topicName = $('#takeNoteTopic').value.trim();
-  const noteText = $('#takeNoteContent').value.trim();
-  const understanding = Number($('#takeNoteUnderstanding').value);
+  if (event) event.preventDefault();
+  try {
+    let subjectId = $('#takeNoteSubject')?.value;
+    const topicName = $('#takeNoteTopic')?.value?.trim();
+    const noteText = $('#takeNoteContent')?.value?.trim() || '';
+    const understanding = Number($('#takeNoteUnderstanding')?.value || 3);
 
-  if (!subjectId || !topicName) {
-    toast('Vui lòng chọn môn học và nhập tên bài học.');
-    return;
+    if (!topicName) {
+      toast('Vui lòng nhập tên bài học / chủ đề.', 'warning');
+      return;
+    }
+
+    let subject = subjectId ? getSubject(subjectId) : null;
+    if (!subject && currentUser.subjects && currentUser.subjects.length > 0) {
+      subject = currentUser.subjects[0];
+      subjectId = subject.id;
+    }
+    if (subject) {
+      subject.topics = subject.topics || [];
+    }
+
+    const interval = getReviewIntervalByUnderstanding(understanding);
+    const nextReviewDate = relDate(interval);
+
+    let topic = subject?.topics?.find(t => t.name.toLowerCase() === topicName.toLowerCase());
+    if (!topic && subject) {
+      topic = { id: uid('topic'), name: topicName, mastery: Math.min(100, understanding * 20), quiz: {} };
+      subject.topics.push(topic);
+    }
+
+    const newNote = {
+      id: uid('note'),
+      subjectId: subjectId || 'sub-gen',
+      topicName,
+      noteText,
+      photoUrl: currentNotePhotoData,
+      understanding,
+      createdAt: TODAY,
+      interval,
+      nextReviewDate,
+      reviewed: false
+    };
+
+    currentUser.studyNotes = currentUser.studyNotes || [];
+    currentUser.studyNotes.unshift(newNote);
+
+    if (topic) {
+      scheduleReviewForTopic(topic.id, understanding, {
+        days: interval,
+        extra: { noteId: newNote.id }
+      });
+
+      currentUser.tasks = currentUser.tasks || [];
+      currentUser.tasks.unshift({
+        id: uid('task-review'),
+        subjectId: subjectId || 'sub-gen',
+        topicId: topic.id,
+        title: `Ôn tập: ${topicName} (từ Take Note)`,
+        minutes: 30,
+        priority: understanding <= 2 ? 5 : 4,
+        deadline: nextReviewDate,
+        status: 'open',
+        createdAt: TODAY
+      });
+    }
+
+    persist();
+    renderApp();
+    closeModal('takeNoteModal');
+    toast(`Đã lưu bài học! TB sẽ tự động nhắc bạn ôn lại vào ${formatShortDate(nextReviewDate)}.`, 'success');
+  } catch (err) {
+    console.error('Lỗi khi lưu Take Note:', err);
+    toast('Có lỗi xảy ra khi lưu bài học. Vui lòng thử lại.', 'danger');
   }
-
-  const interval = getReviewIntervalByUnderstanding(understanding);
-  const nextReviewDate = relDate(interval);
-
-  const subject = getSubject(subjectId);
-  let topic = subject?.topics.find(t => t.name.toLowerCase() === topicName.toLowerCase());
-  if (!topic && subject) {
-    topic = { id: uid('topic'), name: topicName, mastery: Math.min(100, understanding * 20), quiz: {} };
-    subject.topics.push(topic);
-  }
-
-  const newNote = {
-    id: uid('note'),
-    subjectId,
-    topicName,
-    noteText,
-    photoUrl: currentNotePhotoData,
-    understanding,
-    createdAt: TODAY,
-    interval,
-    nextReviewDate,
-    reviewed: false
-  };
-
-  currentUser.studyNotes = currentUser.studyNotes || [];
-  currentUser.studyNotes.unshift(newNote);
-
-  if (topic) {
-    scheduleReviewForTopic(topic.id, understanding, {
-      days: interval,
-      extra: { noteId: newNote.id }
-    });
-
-    currentUser.tasks.unshift({
-      id: uid('task-review'),
-      subjectId,
-      topicId: topic.id,
-      title: `Ôn tập: ${topicName} (từ Take Note)`,
-      minutes: 30,
-      priority: understanding <= 2 ? 5 : 4,
-      deadline: nextReviewDate,
-      status: 'open',
-      createdAt: TODAY
-    });
-  }
-
-  persist();
-  renderApp();
-  closeModal('takeNoteModal');
-  toast(`Đã lưu bài học! TB sẽ tự động nhắc bạn ôn lại vào ${formatShortDate(nextReviewDate)}.`);
 }
 
 function deleteTakeNote(id) {
@@ -1268,6 +1471,15 @@ function openPhotoLightbox(src) {
 
 /* --- Timetable Import (DOCX / Image / Text) --- */
 let parsedImportSlots = [];
+if (typeof window !== 'undefined') {
+  try {
+    Object.defineProperty(window, 'parsedImportSlots', {
+      get: () => parsedImportSlots,
+      set: val => { parsedImportSlots = val; },
+      configurable: true
+    });
+  } catch (e) {}
+}
 let detectedMultiClasses = null;
 let selectedImportClassName = null;
 
@@ -1452,6 +1664,11 @@ function openTimetableModal() {
   $('#importPreview').hidden = true;
   $('#classPickerBox').hidden = true;
   $('#timetableDropzone').hidden = false;
+  const applyBtn = $('#applyTimetableBtn');
+  if (applyBtn) {
+    applyBtn.innerHTML = 'Áp dụng vào Thời khóa biểu <span>✓</span>';
+    applyBtn.disabled = true;
+  }
   openModal('importTimetableModal');
 }
 
@@ -1812,22 +2029,78 @@ function setupClassPickerUI(classMap) {
 }
 
 async function parseImageTimetable(file) {
-  if (!file || !file.type.startsWith('image/')) throw new Error('Vui lòng chọn tệp hình ảnh PNG, JPG hoặc WebP.');
-  const buffer = await file.arrayBuffer();
-  const image = new Uint8Array(buffer);
-  let binary = '';
-  const chunkSize = 0x8000;
-  for (let offset = 0; offset < image.length; offset += chunkSize) {
-    binary += String.fromCharCode(...image.subarray(offset, offset + chunkSize));
+  if (!file) throw new Error('Vui lòng chọn một tệp hình ảnh.');
+  const ext = (file.name || '').split('.').pop().toLowerCase();
+  if (ext === 'heic' || ext === 'heif') {
+    throw new Error('Định dạng ảnh HEIC hiện chưa được hỗ trợ trực tiếp. Vui lòng chụp hoặc lưu ảnh định dạng JPG, PNG hoặc WebP.');
   }
+  if (!file.type.startsWith('image/') && !['png', 'jpg', 'jpeg', 'webp'].includes(ext)) {
+    throw new Error('Vui lòng chọn tệp hình ảnh PNG, JPG hoặc WebP.');
+  }
+
+  let base64Data = '';
+  let mimeType = 'image/jpeg';
+
+  try {
+    const compressed = await new Promise((resolve, reject) => {
+      if (typeof FileReader === 'undefined' || typeof Image === 'undefined') {
+        return reject(new Error('Canvas/Image not available'));
+      }
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Không thể đọc tệp hình ảnh.'));
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('Không thể giải mã hình ảnh.'));
+        img.onload = () => {
+          const maxDim = 1600;
+          let w = img.width;
+          let h = img.height;
+          if (w > maxDim || h > maxDim) {
+            if (w > h) {
+              h = Math.round((h * maxDim) / w);
+              w = maxDim;
+            } else {
+              w = Math.round((w * maxDim) / h);
+              h = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          resolve({
+            base64: dataUrl.replace(/^data:[^;]+;base64,/, ''),
+            mimeType: 'image/jpeg'
+          });
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+    base64Data = compressed.base64;
+    mimeType = compressed.mimeType;
+  } catch (compressErr) {
+    const buffer = await file.arrayBuffer();
+    const image = new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < image.length; offset += chunkSize) {
+      binary += String.fromCharCode(...image.subarray(offset, offset + chunkSize));
+    }
+    base64Data = btoa(binary);
+    mimeType = file.type || 'image/jpeg';
+  }
+
   const response = await fetch('/api/parse-timetable', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ image: btoa(binary), mimeType: file.type })
+    body: JSON.stringify({ image: base64Data, mimeType })
   });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error || 'Không đọc được ảnh này.');
-  if (!Array.isArray(result.slots)) throw new Error('AI không trả về thời khóa biểu hợp lệ.');
+  if (!response.ok) throw new Error(result.error || 'Không đọc được thời khóa biểu từ ảnh này.');
+  if (!Array.isArray(result.slots)) throw new Error('AI không tìm thấy thời khóa biểu hợp lệ trong ảnh.');
   return result.slots.map(slot => {
     const parsed = parseSubjectAndTeacher(slot.title);
     let day = Number(slot.day);
@@ -1955,6 +2228,8 @@ function renderImportPreview() {
     validation.warnings.forEach(w => { warningMap[w.index] = w.messages; });
 
     listEl.innerHTML = parsedImportSlots.map((slot, idx) => {
+      const slotDay = parseTimetableDayToAppDay(slot.day);
+      slot.day = slotDay;
       const slotErrs = errorMap[idx] || [];
       const slotWarns = warningMap[idx] || [];
       const hasErr = slotErrs.length > 0;
@@ -1964,13 +2239,13 @@ function renderImportPreview() {
         <div class="preview-slot-item ${hasErr ? 'has-error' : (hasWarn ? 'has-warning' : '')}">
           <div class="preview-slot-row">
             <select class="preview-input-day" data-preview-idx="${idx}" data-field="day">
-              <option value="1" ${slot.day === 1 ? 'selected' : ''}>T2</option>
-              <option value="2" ${slot.day === 2 ? 'selected' : ''}>T3</option>
-              <option value="3" ${slot.day === 3 ? 'selected' : ''}>T4</option>
-              <option value="4" ${slot.day === 4 ? 'selected' : ''}>T5</option>
-              <option value="5" ${slot.day === 5 ? 'selected' : ''}>T6</option>
-              <option value="6" ${slot.day === 6 ? 'selected' : ''}>T7</option>
-              <option value="0" ${slot.day === 0 ? 'selected' : ''}>CN</option>
+              <option value="1" ${slotDay === 1 ? 'selected' : ''}>T2</option>
+              <option value="2" ${slotDay === 2 ? 'selected' : ''}>T3</option>
+              <option value="3" ${slotDay === 3 ? 'selected' : ''}>T4</option>
+              <option value="4" ${slotDay === 4 ? 'selected' : ''}>T5</option>
+              <option value="5" ${slotDay === 5 ? 'selected' : ''}>T6</option>
+              <option value="6" ${slotDay === 6 ? 'selected' : ''}>T7</option>
+              <option value="0" ${slotDay === 0 ? 'selected' : ''}>CN</option>
             </select>
             <input type="time" class="preview-input-time" data-preview-idx="${idx}" data-field="start" value="${escapeHTML(slot.start || '')}" placeholder="HH:MM" />
             <span>–</span>
@@ -1990,38 +2265,93 @@ function renderImportPreview() {
       `;
     }).join('');
 
-    $('#applyTimetableBtn').disabled = !validation.valid;
+    $('#applyTimetableBtn').disabled = parsedImportSlots.length === 0;
   }
 
   $('#importStatus').hidden = true;
   $('#importPreview').hidden = false;
 }
 
-function applyImportedTimetable() {
-  if (!parsedImportSlots.length) return;
+let _isApplyingTimetable = false;
+async function applyImportedTimetable() {
+  if (_isApplyingTimetable) return;
+  _isApplyingTimetable = true;
+  try {
+    const mode = $('input[name="importMode"]:checked')?.value || 'replace';
+  console.group('[TIMETABLE APPLY]');
+  console.log({
+    parsedCount: parsedImportSlots.length,
+    mode,
+    selectedImportClassName,
+    beforeCount: currentUser.fixedSchedules?.length || 0,
+    slots: (typeof structuredClone === 'function') ? structuredClone(parsedImportSlots) : JSON.parse(JSON.stringify(parsedImportSlots))
+  });
+  console.groupEnd();
+
+  if (!parsedImportSlots.length) {
+    console.warn('[TIMETABLE APPLY] Aborted: parsedImportSlots is empty');
+    toast('Chưa có ca học nào trong tệp để áp dụng.', 'warning');
+    return;
+  }
   const importer = typeof TimetableImporter !== 'undefined' ? TimetableImporter : null;
+
+  // Auto-fill missing period start/end times if available
+  if (importer && importer.getPeriodTime) {
+    parsedImportSlots.forEach(slot => {
+      if ((!slot.start || !slot.end) && (slot.period || slot.periodStart)) {
+        const pt = importer.getPeriodTime(slot.period || slot.periodStart);
+        if (pt) {
+          if (!slot.start) slot.start = pt.start;
+          if (!slot.end) slot.end = pt.end;
+        }
+      }
+    });
+  }
+
+  // Normalize day format across all slots
+  parsedImportSlots.forEach(slot => {
+    slot.day = parseTimetableDayToAppDay(slot.day);
+    if (/^\d:[0-5]\d$/.test(slot.start)) slot.start = '0' + slot.start;
+    if (/^\d:[0-5]\d$/.test(slot.end)) slot.end = '0' + slot.end;
+  });
+  console.log('[TIMETABLE APPLY] AFTER NORMALIZE: normalized =', parsedImportSlots.length, 'slots:', parsedImportSlots.map(s => ({ day: s.day, title: s.title, start: s.start, end: s.end })));
 
   const existingFixed = (currentUser && currentUser.fixedSchedules) ? currentUser.fixedSchedules : [];
   const validation = importer
     ? importer.validateImportSlots(parsedImportSlots, existingFixed)
-    : { valid: true };
+    : { valid: true, errors: [] };
 
-  if (!validation.valid) {
-    toast('Thời khóa biểu còn lỗi. Vui lòng kiểm tra và sửa lại các ca trước khi lưu.');
+  console.log('[TIMETABLE APPLY] AFTER VALIDATE: valid =', validation.valid, 'validCount =', validation.summary?.validCount ?? (validation.valid ? parsedImportSlots.length : 0), 'errors =', validation.errors?.length || 0);
+
+  if (!validation.valid && validation.errors && validation.errors.length > 0) {
+    const firstErr = validation.errors[0]?.messages?.[0] || 'Vui lòng kiểm tra lại các ca học.';
+    console.error('[TIMETABLE APPLY] Validation rejected:', validation.errors);
+    toast(`Không thể lưu: ${firstErr}`, 'warning');
+    renderImportPreview();
     return;
   }
 
-  const mode = $('input[name="importMode"]:checked')?.value || 'replace';
+  const applyBtn = $('#applyTimetableBtn');
+  if (applyBtn) {
+    applyBtn.disabled = true;
+    applyBtn.innerHTML = 'Đang lưu TKB... <span>⏳</span>';
+  }
+
   const importBatchId = 'tb-import-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
 
   const incomingDeduped = importer ? importer.dedupeScheduleEntries(parsedImportSlots) : parsedImportSlots;
+  console.log('[TIMETABLE APPLY] AFTER DEDUPE: deduped =', incomingDeduped.length);
 
+  // Build atomic new fixedSchedules list
+  let baseFixed = [];
   if (mode === 'replace') {
-    currentUser.fixedSchedules = (currentUser.fixedSchedules || []).filter(item => {
+    baseFixed = (currentUser.fixedSchedules || []).filter(item => {
       if (item.source === 'timetable-import') return false;
       if (item.type === 'school' && !item.source && (item.id.startsWith('fixed-school') || item.id.startsWith('imported'))) return false;
       return true;
     });
+  } else {
+    baseFixed = [...(currentUser.fixedSchedules || [])];
   }
 
   if (selectedImportClassName) {
@@ -2030,15 +2360,16 @@ function applyImportedTimetable() {
 
   let addedCount = 0;
   let skippedCount = 0;
+  const newFixedItems = [];
 
   incomingDeduped.forEach(slot => {
-    if (mode === 'merge' && importer && currentUser.fixedSchedules.some(ext => importer.isDuplicateScheduleEntry(ext, slot))) {
+    if (mode === 'merge' && importer && baseFixed.some(ext => importer.isDuplicateScheduleEntry(ext, slot))) {
       skippedCount++;
       return;
     }
 
-    const dayNorm = Number(slot.day) === 7 ? 0 : Number(slot.day);
-    currentUser.fixedSchedules.push({
+    const dayNorm = parseTimetableDayToAppDay(slot.day);
+    newFixedItems.push({
       id: uid('fixed-school'),
       title: slot.title + (slot.periodLabel && !slot.title.includes('Tiết') ? ` (${slot.periodLabel})` : ''),
       subjectGroup: slot.subjectGroup || slot.title,
@@ -2075,20 +2406,83 @@ function applyImportedTimetable() {
     }
   });
 
-  persist();
-  renderApp();
-  if (typeof notificationScheduler !== 'undefined' && notificationScheduler.reconcile) {
-    notificationScheduler.reconcile(currentUser);
+  console.log('[TIMETABLE APPLY] AFTER BUILD NEW STATE: baseFixed =', baseFixed.length, 'newFixedItems =', newFixedItems.length, 'addedCount =', addedCount, 'skippedCount =', skippedCount);
+
+  // Atomic state commit
+  currentUser.fixedSchedules = [...baseFixed, ...newFixedItems];
+  console.log('[TIMETABLE APPLY] AFTER COMMIT: new fixedSchedules.length =', currentUser.fixedSchedules.length);
+
+  // Invalidate any AI schedule caches
+  currentUser.scheduleCache = null;
+  currentUser.lastSimulation = null;
+
+  // Smart date alignment: If current scheduleViewDate has no fixed events, navigate to first imported day
+  if (newFixedItems.length > 0) {
+    const currentViewDay = DateUtil ? DateUtil.getAppDayOfWeek(scheduleViewDate) : new Date().getDay();
+    const hasEventOnViewDate = newFixedItems.some(i => i.day === currentViewDay);
+    if (!hasEventOnViewDate) {
+      const importedDays = [...new Set(newFixedItems.map(i => i.day))].sort((a, b) => {
+        const oA = a === 0 ? 7 : a;
+        const oB = b === 0 ? 7 : b;
+        return oA - oB;
+      });
+      if (importedDays.length > 0) {
+        const targetDay = importedDays[0];
+        const currentOrder = currentViewDay === 0 ? 7 : currentViewDay;
+        const targetOrder = targetDay === 0 ? 7 : targetDay;
+        const diff = targetOrder - currentOrder;
+        if (DateUtil && DateUtil.addAppDays) {
+          scheduleViewDate = DateUtil.addAppDays(scheduleViewDate, diff);
+        }
+      }
+    }
   }
+
+  // Save to local storage first (instant local persistence)
+  saveLocalUser(currentUser);
+  console.log('[TIMETABLE APPLY] AFTER PERSIST: local storage saved');
+
+  renderApp();
+  console.log('[TIMETABLE APPLY] AFTER RENDER: renderApp() completed');
+
+  if (typeof notificationScheduler !== 'undefined' && notificationScheduler.reconcile) {
+    try { notificationScheduler.reconcile(currentUser); } catch (e) { console.warn('Scheduler reconcile error:', e); }
+  }
+
+  // Server synchronization
+  let serverSynced = false;
+  if (!isOfflineMode()) {
+    try {
+      console.log('[TIMETABLE APPLY] Syncing to server via PUT /api/user...');
+      await api('PUT', '/user', currentUser);
+      serverSynced = true;
+      console.log('[TIMETABLE APPLY] AFTER PERSIST: Server PUT /api/user completed (HTTP 200)');
+    } catch (err) {
+      console.error('[TIMETABLE PERSIST FAILED]', err);
+    }
+  }
+
   closeModal('importTimetableModal');
+  if (applyBtn) {
+    applyBtn.innerHTML = 'Áp dụng vào Thời khóa biểu <span>✓</span>';
+    applyBtn.disabled = false;
+  }
 
   const classMsg = selectedImportClassName ? `lớp ${selectedImportClassName} ` : '';
-  if (mode === 'merge' && skippedCount > 0) {
-    toast(`Đã gộp TKB ${classMsg}: Bỏ qua ${skippedCount} ca trùng. Đã thêm ${addedCount} ca mới!`);
+  if (serverSynced || isOfflineMode()) {
+    if (mode === 'merge' && skippedCount > 0) {
+      toast(`Đã gộp TKB ${classMsg}: Bỏ qua ${skippedCount} ca trùng. Đã thêm ${addedCount} ca mới!`, 'success');
+    } else {
+      toast(`Đã cập nhật thành công TKB ${classMsg}(${addedCount} ca học)!`, 'success');
+    }
   } else {
-    toast(`Đã cập nhật thành công TKB ${classMsg}(${addedCount} ca học)!`);
+    toast(`Đã lưu TKB trên thiết bị (${addedCount} ca). Đồng bộ máy chủ đang gặp sự cố.`, 'warning');
   }
+
   showPage('schedule');
+  } finally {
+    _isApplyingTimetable = false;
+  }
 }
 
 function renderApp() {
@@ -2123,16 +2517,17 @@ function openModal(id) { const modal = $(`#${id}`); if (!modal) return; modal.cl
 function closeModal(id) { const modal = $(`#${id}`); if (!modal) return; modal.classList.remove('open'); modal.setAttribute('aria-hidden', 'true'); if (id === 'quickLogModal' && pendingTimerCompletion) { pendingTimerCompletion = null; $('#logTopic').disabled = false; $('#logMinutes').disabled = false; $('#quickLogTitle').textContent = 'Bạn vừa học thế nào?'; } if (!$$('.modal-backdrop.open').length) document.body.style.overflow = ''; }
 function toast(message, type = 'info') {
   if (notificationService) {
+    const opts = { forceToast: true };
     if (type === 'danger' || type === 'error') {
-      return notificationService.error(message);
+      return notificationService.error(message, 'Lỗi', opts);
     }
     if (type === 'success') {
-      return notificationService.success(message);
+      return notificationService.success(message, 'Thành công', opts);
     }
     if (type === 'warning') {
-      return notificationService.warning(message);
+      return notificationService.warning(message, 'Lưu ý', opts);
     }
-    return notificationService.notify(message);
+    return notificationService.info(message, 'Thông báo', opts);
   }
   const element = $('#toast');
   if (element) {
@@ -2218,10 +2613,26 @@ function updateQuickCapturePreview() {
 }
 
 function submitQuickCapture() {
-  if (!currentParsedCapture || !currentParsedCapture.cleanTitle) {
+  const inputEl = $('#quickCaptureInput');
+  const rawInput = inputEl ? inputEl.value.trim() : '';
+
+  if (!rawInput && (!currentParsedCapture || !currentParsedCapture.cleanTitle)) {
     toast('Vui lòng nhập tên công việc.', 'warning');
     return;
   }
+
+  if (!currentParsedCapture || (rawInput && currentParsedCapture.rawText !== rawInput)) {
+    currentParsedCapture = typeof QuickCapture !== 'undefined'
+      ? QuickCapture.parseShorthand(rawInput, TODAY)
+      : { cleanTitle: rawInput, durationMinutes: 30, priority: 3 };
+  }
+
+  const cleanTitle = currentParsedCapture?.cleanTitle || rawInput;
+  if (!cleanTitle) {
+    toast('Vui lòng nhập tên công việc.', 'warning');
+    return;
+  }
+
   const dest = quickCaptureChosenDest;
   let scheduledDate = null;
   let isInbox = false;
@@ -2275,7 +2686,7 @@ function openPlanInboxModal() {
 
   const planToday = createPlan(TODAY);
   const freeToday = TodayEngineUtil
-    ? TodayEngineUtil.calculateFreeTime(currentUser.availability, planToday.fixed, planToday.plan, DateUtil ? DateUtil.getNowVietnam() : new Date())
+    ? TodayEngineUtil.calculateFreeTime(currentUser.availability, planToday.fixed, planToday.plan, (DateUtil && DateUtil.getNowVietnam) ? DateUtil.getNowVietnam() : new Date())
     : 60;
 
   const tomorrow = DateUtil ? DateUtil.addAppDays(TODAY, 1) : TODAY;
@@ -2509,15 +2920,49 @@ function liveRevalidateProposal() {
   }
 }
 
+let currentFixMyDayProposal = null;
+
+function switchFmdStep(stepNum) {
+  $$('#fixMyDayModal .fmd-step-tab').forEach(tab => {
+    tab.classList.toggle('active', Number(tab.dataset.fmdStep) === stepNum);
+  });
+  const s1 = $('#fmdStep1');
+  const s2 = $('#fmdStep2');
+  const s3 = $('#fmdStep3');
+  if (s1) s1.hidden = (stepNum !== 1);
+  if (s2) s2.hidden = (stepNum !== 2);
+  if (s3) s3.hidden = (stepNum !== 3);
+}
+
+function updateFmdSelectedCount() {
+  const countEl = $('#fmdSelectedCount');
+  if (!countEl) return;
+  const checks = $$('#fixMyDayModal .fmd-change-check');
+  const checked = Array.from(checks).filter(c => c.checked).length;
+  countEl.textContent = String(checked);
+}
+
+function setAllFmdChecks(checked) {
+  $$('#fixMyDayModal .fmd-change-check').forEach(cb => {
+    cb.checked = checked;
+    const card = cb.closest('.fmd-change-card');
+    if (card) card.classList.toggle('selected', checked);
+  });
+  updateFmdSelectedCount();
+}
+
 /**
  * P1.3: "Fix My Day" Handler.
- * Analyzes schedule drift, hard/soft conflicts, and deadline risks,
- * then generates an optimized reschedule proposal with "What Changed" diffs.
+ * Deterministic analysis & proposal using DayFixEngine.
+ * Opens 3-step Fix My Day modal.
  */
 function handleFixMyDayClick() {
   if (!currentUser) return;
-  const now = DateUtil ? DateUtil.getNowVietnam() : new Date();
-  const nowTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  let nowTimeStr = (typeof window !== 'undefined' && window.SIMULATED_TIME) || null;
+  if (!nowTimeStr) {
+    const now = (DateUtil && DateUtil.getNowVietnam) ? DateUtil.getNowVietnam() : new Date();
+    nowTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  }
 
   const context = (typeof PlannerContext !== 'undefined' && PlannerContext.buildPlanningContext)
     ? PlannerContext.buildPlanningContext(currentUser, TODAY, { horizonDays: 3 })
@@ -2525,118 +2970,285 @@ function handleFixMyDayClick() {
   context.currentTime = nowTimeStr;
   _currentAiContext = context;
 
-  let proposal = null;
-  if (typeof RescheduleEngine !== 'undefined' && RescheduleEngine.generateReschedulePlan) {
-    proposal = RescheduleEngine.generateReschedulePlan(context, {
-      currentDate: TODAY,
-      currentTime: nowTimeStr
-    });
+  // 1. Analyze Day
+  let analysis = null;
+  if (typeof DayFixEngine !== 'undefined' && DayFixEngine.analyzeDay) {
+    analysis = DayFixEngine.analyzeDay(TODAY, context, { currentTime: nowTimeStr });
+  } else if (typeof RescheduleEngine !== 'undefined' && RescheduleEngine.analyzeDay) {
+    analysis = RescheduleEngine.analyzeDay(TODAY, context, { currentTime: nowTimeStr });
   }
 
-  if (!proposal || !proposal.actions || proposal.actions.length === 0) {
-    toast('Lịch trình hôm nay vẫn đang ổn định, không cần dời nhiệm vụ nào!', 'info');
+  // 2. Fix Day (Proposal)
+  let fixProposal = null;
+  if (typeof DayFixEngine !== 'undefined' && DayFixEngine.fixDay) {
+    fixProposal = DayFixEngine.fixDay(TODAY, context, { currentTime: nowTimeStr });
+  } else if (typeof RescheduleEngine !== 'undefined' && RescheduleEngine.fixDay) {
+    fixProposal = RescheduleEngine.fixDay(TODAY, context, { currentTime: nowTimeStr });
+  }
+
+  console.log('[FixMyDay] handleFixMyDayClick invoked: ' + JSON.stringify({
+    tasksCount: currentUser?.tasks?.length,
+    hasAnalysis: Boolean(analysis),
+    conflicts: analysis?.conflicts?.length,
+    changes: fixProposal?.changes?.length,
+    scheduledTasks: (context.scheduledTasks || []).map(t => ({ id: t.id, start: t.startTime, end: t.endTime, date: t.scheduledDate })),
+    conflictsList: analysis?.conflicts
+  }));
+
+  if (!analysis || !fixProposal) {
+    console.warn('[FixMyDay] Missing analysis or fixProposal');
+    toast('Không thể phân tích lịch trình lúc này.', 'warning');
     return;
   }
 
-  currentAiProposal = proposal;
-  currentAiIntent = { tasks: [], fixedEvents: [], deadlines: [] };
+  if ((!fixProposal.changes || fixProposal.changes.length === 0) && analysis.conflicts.length === 0 && !analysis.overloaded) {
+    console.log('[FixMyDay] Day is healthy, no changes needed');
+    toast('Lịch trình hôm nay vẫn đang cân đối và an toàn, không có xung đột!', 'info');
+    return;
+  }
 
-  // 1. Embed revision for stale protection
-  proposal.contextVersion = getCurrentCalendarRevision();
+  currentFixMyDayProposal = fixProposal;
 
-  // 2. Reset stale banner
-  const staleBanner = $('#aiStaleWarningBanner');
+  // Stale Warning reset
+  const staleBanner = $('#fmdStaleWarning');
   if (staleBanner) staleBanner.hidden = true;
 
-  // 3. Quality comparison Before vs After
-  let beforeScore = 70;
-  let afterScore = 85;
-  if (typeof PlanEvaluator !== 'undefined' && PlanEvaluator.evaluateRescheduleComparison) {
-    const comp = PlanEvaluator.evaluateRescheduleComparison(context.scheduledTasks || [], proposal, context);
-    beforeScore = comp.beforeScore;
-    afterScore = comp.afterScore;
+  // Step 1: Populate Diagnostics
+  const scoreVal = $('#fmdScoreVal');
+  const healthBadge = $('#fmdHealthBadge');
+  if (scoreVal) scoreVal.textContent = `${analysis.score}/100`;
+  if (healthBadge) {
+    healthBadge.textContent = `Sức khỏe: ${analysis.score}/100`;
+    healthBadge.className = 'fmd-badge-score ' + (analysis.score >= 80 ? 'score-good' : (analysis.score >= 60 ? 'score-fair' : 'score-poor'));
   }
-  renderQualityMeter({ score: afterScore, strengths: (proposal.rationale || []).map(r => r.reason) });
 
-  // 4. Populate Reschedule Diff Box (What Changed)
-  const diffBox = $('#aiRescheduleDiffBox');
-  const diffList = $('#aiRescheduleDiffList');
-  const compEl = $('#aiQualityComparison');
-  const riskRow = $('#aiRiskRow');
+  const capVal = $('#fmdCapacityVal');
+  if (capVal && analysis.capacity) {
+    capVal.textContent = `${analysis.capacity.scheduledMinutes} / ${analysis.capacity.availableMinutes}p`;
+  }
 
-  if (diffBox && diffList) {
-    diffBox.hidden = false;
-    if (compEl) {
-      compEl.textContent = `Chất lượng: ${beforeScore} → ${afterScore} pts`;
+  const confVal = $('#fmdConflictsVal');
+  if (confVal) {
+    confVal.textContent = `${analysis.hardConflicts.length} cứng, ${analysis.softConflicts.length} mềm`;
+  }
+
+  const dlVal = $('#fmdDeadlinesVal');
+  if (dlVal) {
+    dlVal.textContent = `${analysis.deadlineRisks.length} rủi ro`;
+  }
+
+  const issuesList = $('#fmdIssuesList');
+  if (issuesList) {
+    const issuesHtml = [];
+    analysis.hardConflicts.forEach(c => {
+      issuesHtml.push(`<div class="fmd-issue-item">🔴 <strong>Xung đột cứng:</strong> ${escapeHTML(c.message || c.reason || 'Trùng lịch')}</div>`);
+    });
+    analysis.softConflicts.forEach(c => {
+      issuesHtml.push(`<div class="fmd-issue-item soft">⚠️ <strong>Cảnh báo:</strong> ${escapeHTML(c.message || c.reason || 'Cần nghỉ ngơi')}</div>`);
+    });
+    analysis.deadlineRisks.forEach(d => {
+      issuesHtml.push(`<div class="fmd-issue-item">🎯 <strong>Rủi ro hạn chót:</strong> ${escapeHTML(d.explanation || d.message || d.taskTitle)}</div>`);
+    });
+    if (analysis.overloaded) {
+      issuesHtml.push(`<div class="fmd-issue-item">⏳ <strong>Quá tải:</strong> Lượng bài cần học (${analysis.capacity.taskMinutes}p) vượt quá khung giờ trống (${analysis.capacity.availableMinutes}p)</div>`);
     }
-    diffList.innerHTML = proposal.actions.map(act => {
-      const oldTime = act.previousStartTime ? `${act.previousStartTime} (${formatShortDate(act.previousDate || TODAY)})` : 'Chưa xếp';
-      const newTime = `${act.startTime} (${formatShortDate(act.date || TODAY)})`;
-      return `
-        <div class="ai-diff-item">
-          <span class="ai-diff-title">${escapeHTML(act.title)}</span>
-          <span class="ai-diff-old">${escapeHTML(oldTime)}</span>
-          <span class="ai-diff-arrow">→</span>
-          <span class="ai-diff-new">${escapeHTML(newTime)}</span>
-        </div>
-      `;
-    }).join('');
-
-    if (riskRow) {
-      const dlRisk = proposal.deadlineRisk || 'safe';
-      const riskClass = `risk-${dlRisk}`;
-      const riskLabels = {
-        safe: '✓ Hạn chót: An toàn',
-        watch: '• Hạn chót: Cần theo dõi',
-        at_risk: '⚠️ Hạn chót: Rủi ro cao',
-        critical: '🔴 Hạn chót: Nguy cấp',
-        impossible: '⛔ Hạn chót: Bất khả thi'
-      };
-      riskRow.innerHTML = `
-        <span class="ai-risk-pill ${riskClass}">${riskLabels[dlRisk] || dlRisk}</span>
-        <span class="ai-risk-pill" style="background:#f3f4f6;color:#374151;">📊 Đổi ${proposal.changeCost || proposal.actions.length} việc</span>
-      `;
+    if (issuesHtml.length === 0) {
+      issuesHtml.push(`<div class="fmd-issue-item soft" style="border-left-color:#10b981;">✓ Không phát hiện xung đột hay quá tải nào.</div>`);
     }
+    issuesList.innerHTML = issuesHtml.join('');
   }
 
-  // Hide regular intent chips box for reschedule
-  const intentBreakdown = $('#aiIntentBreakdown');
-  if (intentBreakdown) intentBreakdown.hidden = true;
+  // Step 2: Populate Recommendations
+  const countEl = $('#fmdChangesCount');
+  if (countEl) countEl.textContent = String(fixProposal.changes.length);
 
-  // Title, subtitle, source tag
-  const titleEl = $('#aiReviewTitle');
-  if (titleEl) titleEl.textContent = '🪄 Tối ưu lại lịch trình (Fix My Day)';
-  const subtitleEl = $('#aiReviewSubtitle');
-  if (subtitleEl) subtitleEl.textContent = 'AI đã tự động xử lý trễ giờ và dời các nhiệm vụ vào khung thời gian tối ưu.';
-  const sourceTag = $('#aiReviewSourceTag');
-  if (sourceTag) sourceTag.textContent = '✦ SMART RESCHEDULE ENGINE';
-  const confBadge = $('#aiConfidenceBadge');
-  if (confBadge) confBadge.textContent = 'Độ tin cậy: 98%';
-
-  // Render interactive action cards with date/time edit inputs and remove button
-  renderActionCards(proposal.actions);
-
-  // Render rationales
-  const rationaleListEl = $('#aiRationaleList');
-  if (rationaleListEl && proposal.rationale) {
-    rationaleListEl.innerHTML = proposal.rationale.map(r => `<li>${escapeHTML(r.reason)}</li>`).join('');
-  }
-
-  // Render warnings
-  const warningsBox = $('#aiWarningsBox');
-  const warningsList = $('#aiWarningsList');
-  if (warningsBox && warningsList) {
-    const warns = proposal.warnings || [];
-    if (warns.length > 0) {
-      warningsBox.hidden = false;
-      warningsList.innerHTML = warns.map(w => `<li>${escapeHTML(w)}</li>`).join('');
+  const changesList = $('#fmdChangesList');
+  if (changesList) {
+    if (fixProposal.changes.length === 0) {
+      changesList.innerHTML = '<p class="empty-state" style="padding:16px;">Không có hành động dời lịch nào cần thực hiện.</p>';
     } else {
-      warningsBox.hidden = true;
+      changesList.innerHTML = fixProposal.changes.map(c => {
+        const levelClass = `fmd-level-${c.level || 1}`;
+        const levelLabels = {
+          1: 'Level 1: Đổi giờ cùng ngày',
+          2: 'Level 2: Dời ngày mai',
+          3: 'Level 3: Tách làm 2 phiên',
+          4: 'Level 4: Nhường chỗ ưu tiên',
+          5: 'Level 5: Rút ngắn phiên học'
+        };
+        const levelText = levelLabels[c.level] || `Level ${c.level}`;
+
+        return `
+          <div class="fmd-change-card selected" id="card-${c.id}">
+            <div class="fmd-change-card-head">
+              <input type="checkbox" class="fmd-change-check" data-change-id="${escapeHTML(c.id)}" checked aria-label="Chọn thay đổi cho ${escapeHTML(c.title)}">
+              <div class="fmd-change-main">
+                <div class="fmd-change-title-row">
+                  <span class="fmd-change-title">${escapeHTML(c.title)}</span>
+                  <span class="fmd-level-badge ${levelClass}">${levelText}</span>
+                </div>
+                <div class="fmd-change-details">
+                  <span class="fmd-detail-key">Hành động:</span>
+                  <span class="fmd-detail-val"><strong>${escapeHTML(c.what)}</strong></span>
+                  <span class="fmd-detail-key">Lý do:</span>
+                  <span class="fmd-detail-val">${escapeHTML(c.why)}</span>
+                  <span class="fmd-detail-key">Đánh đổi:</span>
+                  <span class="fmd-detail-val">${escapeHTML(c.tradeoff)}</span>
+                  <span class="fmd-detail-key">Tác động:</span>
+                  <span class="fmd-detail-val" style="color:#059669;font-weight:600;">${escapeHTML(c.impact)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+  updateFmdSelectedCount();
+
+  // Step 3: Populate Comparison
+  const scoreBefore = $('#fmdScoreBefore');
+  const scoreAfter = $('#fmdScoreAfter');
+  if (scoreBefore) scoreBefore.textContent = `Score: ${fixProposal.scoreBefore} pts`;
+  if (scoreAfter) scoreAfter.textContent = `Score: ${fixProposal.scoreAfter} pts`;
+
+  const timelineBefore = $('#fmdTimelineBefore');
+  const timelineAfter = $('#fmdTimelineAfter');
+  if (timelineBefore) {
+    const bItems = fixProposal.before || [];
+    timelineBefore.innerHTML = bItems.length > 0
+      ? bItems.map(b => `<div class="fmd-mini-entry"><span class="fmd-mini-title">${escapeHTML(b.title)}</span><span class="fmd-mini-time">${b.startTime || '—'} – ${b.endTime || '—'}</span></div>`).join('')
+      : '<span style="font-size:0.75rem;color:#9ca3af;padding:6px;">Không có mục nào</span>';
+  }
+  if (timelineAfter) {
+    const aItems = fixProposal.after || [];
+    timelineAfter.innerHTML = aItems.length > 0
+      ? aItems.map(a => `<div class="fmd-mini-entry" style="border-left:3px solid #10b981;"><span class="fmd-mini-title">${escapeHTML(a.title)}</span><span class="fmd-mini-time">${a.startTime || '—'} – ${a.endTime || '—'}</span></div>`).join('')
+      : '<span style="font-size:0.75rem;color:#9ca3af;padding:6px;">Không có mục nào</span>';
+  }
+
+  // Switch to Step 1 & open modal
+  switchFmdStep(1);
+  openModal('fixMyDayModal');
+}
+
+/**
+ * Applies Fix My Day proposal atomically with Stale Revision check.
+ * @param {boolean} selectedOnly - Apply only checked changes
+ */
+let _isApplyingFixMyDay = false;
+async function applyFixMyDay(selectedOnly = false) {
+  if (_isApplyingFixMyDay) return;
+  if (!currentFixMyDayProposal || !currentUser) return;
+  _isApplyingFixMyDay = true;
+  try {
+    // 1. Fresh revision check (Stale protection)
+  const freshContext = (typeof PlannerContext !== 'undefined' && PlannerContext.buildPlanningContext)
+    ? PlannerContext.buildPlanningContext(currentUser, TODAY)
+    : null;
+  const currentRevision = freshContext && PlannerContext.computePlanningContextRevision
+    ? PlannerContext.computePlanningContextRevision(freshContext)
+    : null;
+
+  if (currentRevision && currentFixMyDayProposal.planningContextRevision && currentFixMyDayProposal.planningContextRevision !== currentRevision) {
+    const staleWarn = $('#fmdStaleWarning');
+    if (staleWarn) staleWarn.hidden = false;
+    toast('Lịch trình đã thay đổi trong lúc bạn xem đề xuất. Vui lòng mở lại Fix My Day!', 'warning');
+    return;
+  }
+
+  // 2. Identify changes to apply
+  let changesToApply = currentFixMyDayProposal.changes || [];
+  if (selectedOnly) {
+    const checkedIds = new Set(
+      Array.from($$('#fixMyDayModal .fmd-change-check:checked')).map(cb => cb.dataset.changeId)
+    );
+    changesToApply = changesToApply.filter(c => checkedIds.has(c.id));
+  }
+
+  if (changesToApply.length === 0) {
+    toast('Không có thay đổi nào được chọn để áp dụng!', 'info');
+    return;
+  }
+
+  // 3. Atomic application
+  let appliedCount = 0;
+  currentUser.tasks = currentUser.tasks || [];
+
+  for (const change of changesToApply) {
+    const act = change.action;
+    if (!act) continue;
+
+    if (act.type === 'move_task') {
+      const task = currentUser.tasks.find(t => t.id === act.taskId);
+      if (task) {
+        task.scheduledDate = act.date;
+        task.startTime = act.startTime;
+        task.endTime = act.endTime;
+        if (act.durationMinutes) task.durationMinutes = act.durationMinutes;
+
+        // If Level 3 splitting
+        if (act.title && act.title.includes('(Phần 1)')) {
+          task.title = act.title;
+          const part2Title = task.title.replace('(Phần 1)', '(Phần 2)');
+          if (!currentUser.tasks.some(t => t.title === part2Title)) {
+            currentUser.tasks.push({
+              id: 'task-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+              title: part2Title,
+              subjectId: task.subjectId,
+              priority: task.priority,
+              scheduledDate: act.date,
+              startTime: act.endTime,
+              durationMinutes: Math.max(30, (task.durationMinutes || 60) - (act.durationMinutes || 30)),
+              status: 'open',
+              deadline: task.deadline
+            });
+          }
+        }
+        appliedCount++;
+      }
+    } else if (act.type === 'reduce_duration') {
+      const task = currentUser.tasks.find(t => t.id === act.taskId);
+      if (task) {
+        task.durationMinutes = act.durationMinutes;
+        task.startTime = act.startTime;
+        task.endTime = act.endTime;
+        appliedCount++;
+      }
     }
   }
 
-  openModal('aiPlanReviewModal');
+  // 4. UI Update (Immediate feedback)
+  closeModal('fixMyDayModal');
+  renderApp();
+  toast(`Đã áp dụng thành công ${appliedCount} thay đổi lịch trình!`, 'success');
+
+  // 5. Persistence (Immediate local save + await server sync)
+  saveLocalUser(currentUser);
+  if (!isOfflineMode()) {
+    try {
+      window._fmdSyncing = true;
+      await api('PUT', '/user', currentUser);
+    } catch (err) {
+      console.warn('[FixMyDay] Server sync warning:', err);
+    } finally {
+      window._fmdSyncing = false;
+    }
+  }
+
+  // 6. Notifications reconciliation
+  if (typeof notificationScheduler !== 'undefined' && notificationScheduler.rescheduleAll) {
+    try {
+      notificationScheduler.rescheduleAll(currentUser.tasks || []);
+    } catch (nErr) {
+      console.warn('[FixMyDay] Notification reschedule error:', nErr);
+    }
+  }
+  } finally {
+    _isApplyingFixMyDay = false;
+  }
 }
+window.applyFixMyDay = applyFixMyDay;
 
 async function handleAiAskSubmit() {
   const diffBox = $('#aiRescheduleDiffBox');
@@ -2975,7 +3587,585 @@ function completeReview(reviewId) {
   renderApp();
   toast('Đã đánh dấu hoàn thành lần ôn.');
 }
-function toggleTask(taskId) { const task = getTask(taskId); if (!task) return; task.status = task.status === 'done' ? 'open' : 'done'; persist(); renderApp(); toast(task.status === 'done' ? 'Đã cập nhật nhiệm vụ hoàn thành.' : 'Nhiệm vụ đã được mở lại.'); }
+/**
+ * P1.4: Enhanced toggleTask supporting execution metrics and backward compatibility.
+ */
+function toggleTask(taskId) {
+  const task = getTask(taskId);
+  if (!task) return;
+  const isDone = (task.status === 'done' || task.status === 'completed');
+  const now = (DateUtil && DateUtil.getNowVietnam) ? DateUtil.getNowVietnam() : new Date();
+  const curTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+  if (isDone) {
+    task.status = 'planned';
+    task.actualEnd = null;
+    task.actualDuration = null;
+  } else {
+    task.status = 'completed';
+    if (!task.actualStart) task.actualStart = task.startTime || curTime;
+    task.actualEnd = curTime;
+    const dur = minFromTime(task.actualEnd) - minFromTime(task.actualStart);
+    task.actualDuration = dur > 0 && dur < 480 ? dur : (task.durationMinutes || task.minutes || 45);
+  }
+  persist();
+  renderApp();
+  toast(task.status === 'completed' ? 'Đã cập nhật nhiệm vụ hoàn thành.' : 'Nhiệm vụ đã được mở lại.');
+}
+
+/**
+ * P1.4: Starts a task execution session.
+ */
+function startTaskExecution(taskId) {
+  const task = getTask(taskId);
+  if (!task) return;
+  const now = (DateUtil && DateUtil.getNowVietnam) ? DateUtil.getNowVietnam() : new Date();
+  const curTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  task.status = 'in_progress';
+  task.actualStart = curTime;
+  persist();
+  renderApp();
+  toast(`Đã bắt đầu "${task.title}". Tập trung học tốt nhé! 🎯`, 'success');
+}
+
+/**
+ * P1.4: Completes a task and records execution metrics.
+ */
+function completeTaskExecution(taskId) {
+  const task = getTask(taskId);
+  if (!task) return;
+  const now = (DateUtil && DateUtil.getNowVietnam) ? DateUtil.getNowVietnam() : new Date();
+  const curTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  task.status = 'completed';
+  if (!task.actualStart) task.actualStart = task.startTime || curTime;
+  task.actualEnd = curTime;
+  const dur = minFromTime(task.actualEnd) - minFromTime(task.actualStart);
+  task.actualDuration = dur > 0 && dur < 480 ? dur : (task.durationMinutes || task.minutes || 45);
+  persist();
+  renderApp();
+  toast(`Xuất sắc! Đã hoàn thành "${task.title}". 🎉`, 'success');
+}
+
+/**
+ * P1.4: Postpones a task to a target date.
+ */
+function postponeTaskExecution(taskId, targetDate = null) {
+  const task = getTask(taskId);
+  if (!task) return;
+  const nextDate = targetDate || (DateUtil && DateUtil.addAppDays ? DateUtil.addAppDays(TODAY, 1) : TODAY);
+  task.status = 'postponed';
+  task.postponedTo = nextDate;
+  persist();
+  renderApp();
+  toast(`Đã dời nhiệm vụ "${task.title}" sang ngày ${nextDate}.`, 'info');
+}
+
+/**
+ * P1.4: Skips a task for today.
+ */
+function skipTaskExecution(taskId) {
+  const task = getTask(taskId);
+  if (!task) return;
+  task.status = 'skipped';
+  persist();
+  renderApp();
+  toast(`Đã bỏ qua nhiệm vụ "${task.title}".`, 'info');
+}
+
+/**
+ * P1.4: Opens Daily Review modal for a given date with strict Data vs Inference breakdown.
+ */
+function openDailyReviewModal(dateStr = null) {
+  if (!currentUser) return;
+  const targetDate = dateStr || TODAY;
+
+  const dateBadge = $('#drDateBadge');
+  if (dateBadge) dateBadge.textContent = targetDate === TODAY ? 'Hôm nay' : targetDate;
+
+  const dateInput = $('#drDateInput');
+  if (dateInput) dateInput.value = targetDate;
+
+  const now = (DateUtil && DateUtil.getNowVietnam) ? DateUtil.getNowVietnam() : new Date();
+  const curTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+  // 1. Analyze Execution
+  const report = ExecutionTrackerUtil
+    ? ExecutionTrackerUtil.analyzeExecution(targetDate, { scheduledTasks: currentUser.tasks || [], currentDate: TODAY, currentTime: curTime })
+    : { summary: {}, metrics: {}, rootCauses: [] };
+
+  // Update 4 Metrics
+  const tasksVal = $('#drTasksVal');
+  if (tasksVal) tasksVal.textContent = `${report.summary.completedTasks || 0} / ${report.summary.totalTasks || 0}`;
+  const tasksPct = $('#drTasksPct');
+  if (tasksPct) tasksPct.textContent = `${report.metrics.completionRate !== undefined ? report.metrics.completionRate : 0}% hoàn thành`;
+
+  const timeVal = $('#drTimeVal');
+  if (timeVal) timeVal.textContent = `${report.summary.actualMinutes || 0}m / ${report.summary.plannedMinutes || 0}m`;
+  const timeVar = $('#drTimeVariance');
+  if (timeVar) {
+    const diff = (report.summary.actualMinutes || 0) - (report.summary.plannedMinutes || 0);
+    timeVar.textContent = `${diff >= 0 ? '+' : ''}${diff}m chênh lệch`;
+  }
+
+  const adhVal = $('#drAdherenceVal');
+  if (adhVal) adhVal.textContent = `${report.metrics.adherenceRate !== undefined ? report.metrics.adherenceRate : 100}%`;
+  const startDelay = $('#drStartDelay');
+  if (startDelay) {
+    const delay = report.metrics.avgDelayMinutes || 0;
+    startDelay.textContent = delay > 0 ? `Trễ TB: ${delay} phút` : 'Đúng giờ hẹn';
+  }
+
+  const deadVal = $('#drDeadlineVal');
+  if (deadVal) deadVal.textContent = `${report.metrics.deadlineSuccessRate !== undefined ? report.metrics.deadlineSuccessRate : 100}%`;
+  const deadSub = $('#drDeadlineSub');
+  if (deadSub) {
+    const overdueCount = report.summary.overdueTasks || 0;
+    deadSub.textContent = overdueCount > 0 ? `${overdueCount} việc trễ hạn` : 'Bảo toàn 100%';
+  }
+
+  // 2. Root Causes (DATA vs INFERENCE)
+  const causesContainer = $('#drRootCausesList');
+  if (causesContainer) {
+    const causes = report.rootCauses || [];
+    if (causes.length === 0) {
+      causesContainer.innerHTML = `
+        <div class="dr-cause-card" style="border-left: 4px solid #10b981;">
+          <div class="dr-cause-header">
+            <span class="badge-data">DỮ LIỆU THỰC TẾ (FACT)</span>
+            <strong>Kế hoạch trọn vẹn</strong>
+          </div>
+          <p>Mọi nhiệm vụ trong ngày đều diễn ra đúng tiến độ, không phát hiện trễ giờ hay phát sinh ngoài dự tính.</p>
+        </div>
+      `;
+    } else {
+      causesContainer.innerHTML = causes.map(cause => {
+        const isData = cause.type === 'data';
+        return `
+          <div class="dr-cause-card" style="border-left: 4px solid ${isData ? '#3b82f6' : '#f59e0b'};">
+            <div class="dr-cause-header">
+              <span class="${isData ? 'badge-data' : 'badge-inference'}">
+                ${isData ? 'DỮ LIỆU THỰC TẾ (FACT)' : 'SUY LUẬN HỆ THỐNG (INFERENCE)'}
+              </span>
+              <strong>${escapeHTML(cause.title || cause.category || '')}</strong>
+            </div>
+            <p>${escapeHTML(cause.description || cause.message || '')}</p>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // 3. Patterns Detection (N >= 3)
+  const patternsContainer = $('#drPatternsList');
+  const allTasks = currentUser.tasks || [];
+  const patterns = PatternDetectorUtil ? PatternDetectorUtil.detectPatterns(allTasks) : [];
+  if (patternsContainer) {
+    if (patterns.length === 0) {
+      patternsContainer.innerHTML = `
+        <div class="empty-state" style="padding: 12px; font-size: 0.82rem; color: #6b7280;">
+          Chưa đủ mẫu lặp lại (hệ thống yêu cầu tối thiểu N ≥ 3 ca học tương đồng để suy ra quy luật chính xác, tránh thiên kiến).
+        </div>
+      `;
+    } else {
+      patternsContainer.innerHTML = patterns.map(p => `
+        <div class="dr-pattern-card">
+          <div class="dr-pattern-head">
+            <strong>${escapeHTML(p.type === 'late_start_pattern' ? 'Thói quen bắt đầu trễ giờ' : (p.type === 'duration_underestimate_pattern' ? `Ước lượng thời lượng môn ${p.subjectId || ''}` : `Hiệu suất khung giờ ${p.timeBlock || ''}`))}</strong>
+            <span class="badge-confidence">${Math.round(p.confidence * 100)}% tin cậy (N=${p.sampleSize})</span>
+          </div>
+          <p>${escapeHTML(p.message || '')}</p>
+          <div class="dr-pattern-rec">💡 Đề xuất: ${escapeHTML(p.actionableRecommendation || '')}</div>
+        </div>
+      `).join('');
+    }
+  }
+
+  // 4. Actionable Recommendations (Adaptive Learning)
+  const recsContainer = $('#drRecommendationsList');
+  const currentPrefs = currentUser.settings?.learnedPreferences || {};
+  const recs = AdaptiveLearningUtil ? AdaptiveLearningUtil.generateRecommendations(patterns, currentPrefs) : [];
+  if (recsContainer) {
+    if (recs.length === 0) {
+      recsContainer.innerHTML = `
+        <div class="empty-state" style="padding: 12px; font-size: 0.82rem; color: #6b7280;">
+          Hệ thống chưa có đề xuất điều chỉnh nào cần phê duyệt lúc này.
+        </div>
+      `;
+    } else {
+      recsContainer.innerHTML = recs.map(rec => {
+        const isApplied = rec.applied;
+        return `
+          <div class="dr-rec-card" id="card-${escapeHTML(rec.id)}">
+            <div class="dr-rec-info">
+              <h4>${escapeHTML(rec.title)}</h4>
+              <p>${escapeHTML(rec.description)}</p>
+            </div>
+            <div class="dr-rec-actions">
+              ${isApplied
+                ? '<span class="status-pill green">✓ Đã áp dụng</span>'
+                : `<button type="button" class="primary-button small-btn" data-apply-rec="${escapeHTML(rec.key)}" data-rec-val="${escapeHTML(String(rec.value))}">Áp dụng</button>
+                   <button type="button" class="outline-button small-btn" data-decline-rec="${escapeHTML(rec.id)}">Bỏ qua</button>`}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  openModal('dailyReviewModal');
+}
+
+/**
+ * P1.4: Opens Weekly Review modal summarizing 7-day execution trends.
+ */
+function openWeeklyReviewModal() {
+  if (!currentUser) return;
+  const startDate = DateUtil && DateUtil.addAppDays ? DateUtil.addAppDays(TODAY, -6) : TODAY;
+  const endDate = TODAY;
+
+  const now = (DateUtil && DateUtil.getNowVietnam) ? DateUtil.getNowVietnam() : new Date();
+  const curTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+  const report = ExecutionTrackerUtil
+    ? ExecutionTrackerUtil.analyzeExecution({ start: startDate, end: endDate }, { scheduledTasks: currentUser.tasks || [], currentDate: TODAY, currentTime: curTime })
+    : { summary: {}, metrics: {}, rootCauses: [] };
+
+  const compRateEl = $('#wrCompletionRate');
+  if (compRateEl) compRateEl.textContent = `${report.metrics.completionRate || 0}%`;
+  const tasksSumEl = $('#wrTasksSummary');
+  if (tasksSumEl) tasksSumEl.textContent = `${report.summary.completedTasks || 0} / ${report.summary.totalTasks || 0} việc`;
+
+  const studyHoursEl = $('#wrStudyHours');
+  if (studyHoursEl) studyHoursEl.textContent = `${(Number(report.summary.actualMinutes || 0) / 60).toFixed(1)}h`;
+  const planHoursEl = $('#wrPlannedHours');
+  if (planHoursEl) planHoursEl.textContent = `Kế hoạch: ${(Number(report.summary.plannedMinutes || 0) / 60).toFixed(1)}h`;
+
+  const adhRateEl = $('#wrAdherenceRate');
+  if (adhRateEl) adhRateEl.textContent = `${report.metrics.adherenceRate || 100}%`;
+  const avgDelayEl = $('#wrAvgDelay');
+  if (avgDelayEl) avgDelayEl.textContent = `Trễ TB: ${report.metrics.avgDelayMinutes || 0}p`;
+
+  const allTasks = currentUser.tasks || [];
+  const patterns = PatternDetectorUtil ? PatternDetectorUtil.detectPatterns(allTasks) : [];
+  const patCountEl = $('#wrPatternsCount');
+  if (patCountEl) patCountEl.textContent = String(patterns.length);
+
+  const patternsContainer = $('#wrPatternsList');
+  if (patternsContainer) {
+    if (patterns.length === 0) {
+      patternsContainer.innerHTML = `<div class="empty-state" style="padding: 12px; font-size: 0.82rem; color: #6b7280;">Chưa ghi nhận thói quen nào lặp lại đủ ngưỡng N ≥ 3 trong tuần này.</div>`;
+    } else {
+      patternsContainer.innerHTML = patterns.map(p => `
+        <div class="dr-pattern-card">
+          <div class="dr-pattern-head">
+            <strong>${escapeHTML(p.type === 'late_start_pattern' ? 'Thói quen bắt đầu trễ giờ' : (p.type === 'duration_underestimate_pattern' ? `Ước lượng môn ${p.subjectId || ''}` : `Khung giờ ${p.timeBlock || ''}`))}</strong>
+            <span class="badge-confidence">${Math.round(p.confidence * 100)}% tin cậy (N=${p.sampleSize})</span>
+          </div>
+          <p>${escapeHTML(p.message || '')}</p>
+        </div>
+      `).join('');
+    }
+  }
+
+  const currentPrefs = currentUser.settings?.learnedPreferences || {};
+  const recs = AdaptiveLearningUtil ? AdaptiveLearningUtil.generateRecommendations(patterns, currentPrefs).slice(0, 3) : [];
+  const recsContainer = $('#wrRecommendationsList');
+  if (recsContainer) {
+    if (recs.length === 0) {
+      recsContainer.innerHTML = `<div class="empty-state" style="padding: 12px; font-size: 0.82rem; color: #6b7280;">Lịch học tuần qua rất cân bằng, không có đề xuất đặc biệt.</div>`;
+    } else {
+      recsContainer.innerHTML = recs.map(rec => `
+        <div class="dr-rec-card" id="wrec-${escapeHTML(rec.id)}">
+          <div class="dr-rec-info">
+            <h4>${escapeHTML(rec.title)}</h4>
+            <p>${escapeHTML(rec.description)}</p>
+          </div>
+          <div class="dr-rec-actions">
+            ${rec.applied
+              ? '<span class="status-pill green">✓ Đã áp dụng</span>'
+              : `<button type="button" class="primary-button small-btn" data-apply-rec="${escapeHTML(rec.key)}" data-rec-val="${escapeHTML(String(rec.value))}">Áp dụng</button>`}
+          </div>
+        </div>
+      `).join('');
+    }
+  }
+
+  openModal('weeklyReviewModal');
+}
+
+/* ==========================================================================
+   PRODUCT PHASE P1.5: UNIFIED AI TIME ASSISTANT (ASK AI) LOGIC
+   ========================================================================== */
+let currentAskAIProposal = null;
+let currentAskAIContextRevision = null;
+let isAskAISubmitting = false;
+
+function addAskAIBubble(role, messageText, extraHtml = '') {
+  const stream = document.getElementById('askAIStream');
+  if (!stream) return;
+  const bubble = document.createElement('div');
+  bubble.className = 'ask-ai-bubble ' + (role === 'user' ? 'user' : 'bot');
+
+  const avatar = document.createElement('div');
+  avatar.className = 'bubble-avatar';
+  avatar.textContent = role === 'user' ? (typeof initials === 'function' ? initials() : 'U') : '✦';
+
+  const content = document.createElement('div');
+  content.className = 'bubble-content';
+  const formatted = escapeHTML(messageText).replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  content.innerHTML = '<p>' + formatted + '</p>' + extraHtml;
+
+  bubble.appendChild(avatar);
+  bubble.appendChild(content);
+  stream.appendChild(bubble);
+  stream.scrollTop = stream.scrollHeight;
+}
+
+async function submitAskAI(query) {
+  const text = String(query || '').trim();
+  if (!text || isAskAISubmitting || !currentUser) return;
+
+  isAskAISubmitting = true;
+  const input = document.getElementById('askAIInput');
+  const sendBtn = document.getElementById('askAISendBtn');
+  const loading = document.getElementById('askAILoading');
+  const proposalCard = document.getElementById('askAIProposalCard');
+
+  if (input) input.disabled = true;
+  if (sendBtn) sendBtn.disabled = true;
+  if (loading) loading.hidden = false;
+  if (proposalCard) proposalCard.hidden = true;
+
+  addAskAIBubble('user', text);
+  if (input) input.value = '';
+
+  try {
+    const TimeAssistantUtil = (typeof TimeAssistant !== 'undefined' && TimeAssistant)
+      ? TimeAssistant
+      : (typeof AIFoundation !== 'undefined' && AIFoundation.TimeAssistant ? AIFoundation.TimeAssistant : null);
+
+    if (!TimeAssistantUtil || typeof TimeAssistantUtil.handleUserQuery !== 'function') {
+      throw new Error('TimeAssistant engine chưa sẵn sàng.');
+    }
+
+    const curTime = DateUtil && DateUtil.getCurrentAppTime
+      ? DateUtil.getCurrentAppTime()
+      : (new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date()));
+    const clientAIAdapter = (typeof AIProvider !== 'undefined' && AIProvider.ClientAIAdapter) ? new AIProvider.ClientAIAdapter() : null;
+
+    const response = await TimeAssistantUtil.handleUserQuery(text, currentUser, {
+      aiAdapter: clientAIAdapter,
+      currentDate: TODAY,
+      currentTime: curTime
+    });
+
+    let extraHtml = '';
+    if (Array.isArray(response.actions) && response.actions.length > 0 && response.status === 'information') {
+      const slotBtns = response.actions.filter(a => a.type === 'plan_slot').map(a =>
+        '<button type="button" class="primary-button small-btn" style="margin-top: 6px; margin-right: 6px;"' +
+        ' data-plan-slot-date="' + escapeHTML(a.payload.date) + '"' +
+        ' data-plan-slot-start="' + escapeHTML(a.payload.startTime) + '"' +
+        ' data-plan-slot-end="' + escapeHTML(a.payload.endTime) + '"' +
+        ' data-plan-slot-dur="' + escapeHTML(String(a.payload.durationMinutes)) + '"' +
+        ' data-plan-slot-sub="' + escapeHTML(a.payload.subject || '') + '">' +
+        escapeHTML(a.label) +
+        '</button>'
+      ).join('');
+      if (slotBtns) extraHtml = '<div style="margin-top: 8px;">' + slotBtns + '</div>';
+    }
+
+    addAskAIBubble('bot', response.message || 'Đã tiếp nhận yêu cầu.', extraHtml);
+
+    if (response.proposal && Array.isArray(response.proposal.actions) && response.proposal.actions.length > 0) {
+      renderAskAIProposal(response.proposal);
+    }
+  } catch (err) {
+    console.error('[Ask AI Error]:', err);
+    addAskAIBubble('bot', 'Rất tiếc, đã có sự cố khi xử lý yêu cầu: ' + getFriendlyErrorMessage(err) + ' Hãy thử lại.');
+  } finally {
+    isAskAISubmitting = false;
+    if (input) { input.disabled = false; input.focus(); }
+    if (sendBtn) sendBtn.disabled = false;
+    if (loading) loading.hidden = true;
+  }
+}
+
+function renderAskAIProposal(proposal) {
+  currentAskAIProposal = proposal;
+  const PlannerContextUtil = (typeof PlannerContext !== 'undefined' && PlannerContext)
+    ? PlannerContext
+    : (typeof AIFoundation !== 'undefined' ? AIFoundation.PlannerContext : null);
+  currentAskAIContextRevision = PlannerContextUtil && PlannerContextUtil.computeCalendarRevision
+    ? PlannerContextUtil.computeCalendarRevision(currentUser.tasks, currentUser.fixedSchedules, TODAY)
+    : null;
+
+  const card = document.getElementById('askAIProposalCard');
+  const body = document.getElementById('askAIProposalBody');
+  const staleWarn = document.getElementById('askAIStaleWarning');
+  if (!card || !body) return;
+
+  if (staleWarn) staleWarn.hidden = true;
+
+  const actions = proposal.actions || [];
+  body.innerHTML =
+    '<p style="margin: 0 0 8px; font-weight: 600;">Hệ thống đề xuất ' + actions.length + ' thay đổi lịch trình an toàn:</p>' +
+    '<div style="display: flex; flex-direction: column; gap: 6px;">' +
+    actions.map(act =>
+      '<div class="aip-action-item">' +
+      '<div class="aip-action-title">' +
+      (act.type === 'create_task' ? '➕ Tạo nhiệm vụ: ' : '📅 Ca học: ') +
+      escapeHTML(act.title || 'Nhiệm vụ') +
+      (act.startTime && act.endTime ? ' (' + escapeHTML(act.startTime) + ' – ' + escapeHTML(act.endTime) + ')' : '') +
+      '</div>' +
+      '<div class="aip-action-why">' +
+      escapeHTML(act.rationale || ('Điều chỉnh ' + (act.durationMinutes || 45) + ' phút ngày ' + (act.date || TODAY) + '.')) +
+      '</div>' +
+      '</div>'
+    ).join('') +
+    '</div>';
+
+  card.hidden = false;
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+let _isApplyingAskAIProposal = false;
+async function applyAskAIProposal() {
+  if (_isApplyingAskAIProposal) return;
+  if (!currentAskAIProposal || !currentUser) return;
+  _isApplyingAskAIProposal = true;
+  try {
+    const PlannerContextUtil = (typeof PlannerContext !== 'undefined' && PlannerContext)
+    ? PlannerContext
+    : (typeof AIFoundation !== 'undefined' ? AIFoundation.PlannerContext : null);
+
+  if (currentAskAIContextRevision && PlannerContextUtil && PlannerContextUtil.computeCalendarRevision) {
+    const freshRevision = PlannerContextUtil.computeCalendarRevision(currentUser.tasks, currentUser.fixedSchedules, TODAY);
+    if (freshRevision !== currentAskAIContextRevision) {
+      const staleWarn = document.getElementById('askAIStaleWarning');
+      if (staleWarn) staleWarn.hidden = false;
+      toast('Lịch trình đã thay đổi trong khi chờ duyệt. Vui lòng hỏi lại để cập nhật đề xuất mới nhất.', 'warning');
+      return;
+    }
+  }
+
+  const actions = currentAskAIProposal.actions || [];
+  let addedCount = 0;
+  let updatedCount = 0;
+
+  actions.forEach(act => {
+    if (act.type === 'create_task') {
+      const newTask = {
+        id: act.taskId || ('task-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6)),
+        title: act.title,
+        subjectId: act.subjectId || currentUser.subjects[0]?.id || null,
+        scheduledDate: act.date || TODAY,
+        durationMinutes: act.durationMinutes || 45,
+        deadline: act.deadline || null,
+        priority: act.priority || 3,
+        status: 'planned'
+      };
+      currentUser.tasks.push(newTask);
+      addedCount++;
+    } else if (act.type === 'schedule_task') {
+      if (act.taskId) {
+        const existing = currentUser.tasks.find(t => t.id === act.taskId);
+        if (existing) {
+          existing.scheduledDate = act.date || existing.scheduledDate || TODAY;
+          existing.startTime = act.startTime;
+          existing.endTime = act.endTime;
+          existing.durationMinutes = act.durationMinutes || existing.durationMinutes;
+          updatedCount++;
+          return;
+        }
+      }
+      const newTask = {
+        id: 'task-ai-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+        title: act.title,
+        subjectId: currentUser.subjects[0]?.id || null,
+        scheduledDate: act.date || TODAY,
+        startTime: act.startTime,
+        endTime: act.endTime,
+        durationMinutes: act.durationMinutes || 45,
+        status: 'planned'
+      };
+      currentUser.tasks.push(newTask);
+      addedCount++;
+    }
+  });
+
+  const card = document.getElementById('askAIProposalCard');
+  if (card) card.hidden = true;
+  currentAskAIProposal = null;
+
+  saveLocalUser(currentUser);
+  persist();
+  renderApp();
+
+  addAskAIBubble('bot', '✓ Đã áp dụng thành công ' + actions.length + ' thay đổi lịch vào thời gian biểu của bạn.');
+  toast('Đã cập nhật lịch trình (' + addedCount + ' thêm mới, ' + updatedCount + ' điều chỉnh)', 'success');
+  } finally {
+    _isApplyingAskAIProposal = false;
+  }
+}
+
+function resetAskAIConversation() {
+  const TimeAssistantUtil = (typeof TimeAssistant !== 'undefined' && TimeAssistant)
+    ? TimeAssistant
+    : (typeof AIFoundation !== 'undefined' && AIFoundation.TimeAssistant ? AIFoundation.TimeAssistant : null);
+
+  if (TimeAssistantUtil && typeof TimeAssistantUtil.resetConversation === 'function') {
+    TimeAssistantUtil.resetConversation();
+  }
+
+  const stream = document.getElementById('askAIStream');
+  if (stream) {
+    stream.innerHTML =
+      '<div class="ask-ai-bubble bot">' +
+      '<div class="bubble-avatar">✦</div>' +
+      '<div class="bubble-content">' +
+      'Chào bạn! Cuộc hội thoại đã được đặt lại mới. Bạn muốn tôi giúp gì với lịch trình học tập của bạn?' +
+      '</div>' +
+      '</div>';
+  }
+
+  const proposalCard = document.getElementById('askAIProposalCard');
+  if (proposalCard) proposalCard.hidden = true;
+  currentAskAIProposal = null;
+  toast('Đã đặt lại cuộc hội thoại với Trợ lý AI.', 'info');
+}
+
+
+/**
+ * P1.4: Applies a recommendation into user settings.
+ */
+function applyLearnedRecommendation(key, val) {
+  if (!currentUser) return;
+  if (!currentUser.settings) currentUser.settings = {};
+  if (!currentUser.settings.learnedPreferences) {
+    currentUser.settings.learnedPreferences = AdaptiveLearningUtil ? AdaptiveLearningUtil.getBasePreferences() : {};
+  }
+  const updated = AdaptiveLearningUtil
+    ? AdaptiveLearningUtil.applyRecommendation(currentUser.settings.learnedPreferences, key, val)
+    : { ...currentUser.settings.learnedPreferences, [key]: val };
+  currentUser.settings.learnedPreferences = updated;
+  persist();
+  renderApp();
+  toast(`Đã lưu tinh chỉnh thói quen. Lịch học tiếp theo sẽ tự động thích ứng! ✨`, 'success');
+}
+
+/**
+ * P1.4: Resets learned preferences without affecting task history.
+ */
+function resetLearnedPreferences() {
+  if (!currentUser || !currentUser.settings) return;
+  const reset = AdaptiveLearningUtil
+    ? AdaptiveLearningUtil.resetLearnedPreferences(currentUser.settings.learnedPreferences)
+    : { enabled: true, preferredStartBuffer: 0, durationMultipliers: {}, eveningLoadAdjustment: 0, preferredBreakMinutes: 10, acceptedRecommendations: [] };
+  currentUser.settings.learnedPreferences = reset;
+  persist();
+  renderApp();
+  toast('Đã khôi phục các hệ số và đệm học tập về mặc định.', 'success');
+}
 
 function populateTaskFields(subjectId, topicId) { const select = $('#taskSubject'); select.innerHTML = currentUser.subjects.map(subject => `<option value="${subject.id}">${escapeHTML(subject.name)}</option>`).join(''); if (subjectId) select.value = subjectId; const subject = getSubject(select.value); $('#taskTopic').innerHTML = subject?.topics.length ? subject.topics.map(topic => `<option value="${topic.id}">${escapeHTML(topic.name)}</option>`).join('') : '<option value="">Chưa có chủ đề</option>'; if (topicId) $('#taskTopic').value = topicId; }
 function openTaskModal(task = null) { if (!currentUser.subjects.length) { toast('Hãy thêm ít nhất một môn học trước khi tạo nhiệm vụ.'); showPage('subjects'); return; } $('#taskModalTitle').textContent = task ? 'Chỉnh sửa nhiệm vụ' : 'Thêm nhiệm vụ mới'; $('#taskId').value = task?.id || ''; $('#taskName').value = task?.title || ''; populateTaskFields(task?.subjectId, task?.topicId); $('#taskDuration').value = String(task?.minutes || 45); $('#taskPriority').value = String(task?.priority || 4); $('#taskDeadline').value = task?.deadline || TODAY; $('#deleteTaskButton').hidden = !task; openModal('taskModal'); }
@@ -3183,7 +4373,7 @@ async function signIn(email, password) {
       loginSuccess();
       return;
     }
-    $('#loginError').textContent = err.message;
+    $('#loginError').textContent = getFriendlyErrorMessage(err);
     $('#loginError').hidden = false;
   }
 }
@@ -3305,7 +4495,7 @@ async function createProfile(event) {
       toast('Tài khoản đã được tạo thành công!');
       return;
     }
-    toast(err.message);
+    toast(getFriendlyErrorMessage(err));
   }
 }
 function exportData() { const blob = new Blob([JSON.stringify(currentUser, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `TB-${currentUser.profile.name.toLowerCase().replace(/\s+/g, '-')}.json`; link.click(); URL.revokeObjectURL(url); toast('Đã xuất bản sao lưu dữ liệu.'); }
@@ -3478,40 +4668,51 @@ $('#accountButton')?.addEventListener('click', () => openModal('accountModal'));
 
 /* New feature event listeners */
 $('#takeNoteForm')?.addEventListener('submit', saveTakeNote);
+$('#quickCaptureForm')?.addEventListener('submit', event => { event.preventDefault(); submitQuickCapture(); });
 $('#addMilestoneForm')?.addEventListener('submit', addMilestone);
+$('#timetableFileInput')?.addEventListener('click', e => { e.target.value = ''; });
 $('#timetableFileInput')?.addEventListener('change', e => { if (e.target.files?.[0]) handleTimetableFile(e.target.files[0]); });
+$('#notePhotoInput')?.addEventListener('click', e => { e.target.value = ''; });
 $('#notePhotoInput')?.addEventListener('change', e => { if (e.target.files?.[0]) processNotePhoto(e.target.files[0]); });
 
-['input', 'change'].forEach(evtName => {
-  $('#previewSlotList')?.addEventListener(evtName, event => {
-    const input = event.target.closest('[data-preview-idx]');
-    if (!input) return;
-    const idx = parseInt(input.dataset.previewIdx, 10);
-    const field = input.dataset.field;
-    if (!parsedImportSlots[idx]) return;
+function updatePreviewSlotField(input) {
+  if (!input) return;
+  const idx = parseInt(input.dataset.previewIdx, 10);
+  const field = input.dataset.field;
+  if (!parsedImportSlots[idx]) return;
 
-    if (field === 'day') {
-      parsedImportSlots[idx].day = parseInt(input.value, 10);
-    } else if (field === 'start') {
-      parsedImportSlots[idx].start = input.value.trim();
-    } else if (field === 'end') {
-      parsedImportSlots[idx].end = input.value.trim();
-    } else if (field === 'title') {
-      const rawVal = input.value.trim();
-      const importer = typeof TimetableImporter !== 'undefined' ? TimetableImporter : null;
-      const parsed = importer ? importer.parseSubjectAndTeacher(rawVal) : null;
-      if (parsed) {
-        parsedImportSlots[idx].title = parsed.title;
-        parsedImportSlots[idx].subjectGroup = parsed.subjectGroup;
-      } else {
-        parsedImportSlots[idx].title = rawVal;
-      }
-    } else if (field === 'teacher') {
-      parsedImportSlots[idx].teacher = input.value.trim();
+  if (field === 'day') {
+    parsedImportSlots[idx].day = parseTimetableDayToAppDay(input.value);
+  } else if (field === 'start') {
+    parsedImportSlots[idx].start = input.value.trim();
+  } else if (field === 'end') {
+    parsedImportSlots[idx].end = input.value.trim();
+  } else if (field === 'title') {
+    const rawVal = input.value.trim();
+    const importer = typeof TimetableImporter !== 'undefined' ? TimetableImporter : null;
+    const parsed = importer ? importer.parseSubjectAndTeacher(rawVal) : null;
+    if (parsed) {
+      parsedImportSlots[idx].title = parsed.title;
+      parsedImportSlots[idx].subjectGroup = parsed.subjectGroup;
+    } else {
+      parsedImportSlots[idx].title = rawVal;
     }
+  } else if (field === 'teacher') {
+    parsedImportSlots[idx].teacher = input.value.trim();
+  }
+}
 
-    renderImportPreview();
-  });
+$('#previewSlotList')?.addEventListener('input', event => {
+  const input = event.target.closest('[data-preview-idx]');
+  if (input) updatePreviewSlotField(input);
+  const applyBtn = $('#applyTimetableBtn');
+  if (applyBtn) applyBtn.disabled = parsedImportSlots.length === 0;
+});
+
+$('#previewSlotList')?.addEventListener('change', event => {
+  const input = event.target.closest('[data-preview-idx]');
+  if (input) updatePreviewSlotField(input);
+  renderImportPreview();
 });
 
 $$('input[name="importMode"]').forEach(radio => {
@@ -3526,12 +4727,6 @@ const timetableDropzone = $('#timetableDropzone');
 const importModal = $('#importTimetableModal');
 
 if (timetableDropzone) {
-  timetableDropzone.addEventListener('click', (e) => {
-    if (e.target !== $('#timetableFileInput')) {
-      $('#timetableFileInput').click();
-    }
-  });
-
   ['dragenter', 'dragover'].forEach(name => {
     timetableDropzone.addEventListener(name, (e) => {
       e.preventDefault();
@@ -3633,9 +4828,100 @@ document.addEventListener('click', event => {
   if (event.target.closest('#openTakeNoteBtn, #homeTakeNoteButton')) openTakeNoteModal();
   if (event.target.closest('#openMilestonesBtn, #manageExamsBtn')) { renderMilestonesModal(); openModal('milestoneModal'); }
   if (event.target.closest('#importTimetableButton')) openTimetableModal();
-  if (event.target.closest('#browseTimetableBtn')) $('#timetableFileInput').click();
+  if (event.target.closest('#browseTimetableBtn') && event.target !== $('#timetableFileInput')) $('#timetableFileInput')?.click();
   if (event.target.closest('#applyTimetableBtn')) applyImportedTimetable();
   if (event.target.closest('#cancelImportBtn')) closeModal('importTimetableModal');
+
+  
+  /* P1.5: Ask AI Event Delegates */
+  if (event.target.closest('#openAskAIBtn')) {
+    const askWidget = document.getElementById('askAIWidget');
+    if (askWidget) {
+      askWidget.scrollIntoView({ behavior: 'smooth' });
+      const input = document.getElementById('askAIInput');
+      if (input) input.focus();
+    }
+  }
+  if (event.target.closest('#askAISendBtn')) {
+    const input = document.getElementById('askAIInput');
+    if (input) submitAskAI(input.value);
+  }
+  const chipBtn = event.target.closest('.ask-chip');
+  if (chipBtn) {
+    submitAskAI(chipBtn.dataset.chip);
+  }
+  if (event.target.closest('#askAIResetBtn')) {
+    resetAskAIConversation();
+  }
+  if (event.target.closest('#askAIApplyBtn')) {
+    applyAskAIProposal();
+  }
+  if (event.target.closest('#askAIDismissBtn')) {
+    const card = document.getElementById('askAIProposalCard');
+    if (card) card.hidden = true;
+    currentAskAIProposal = null;
+  }
+  const slotBtn = event.target.closest('[data-plan-slot-date]');
+  if (slotBtn) {
+    const sDate = slotBtn.dataset.planSlotDate;
+    const sStart = slotBtn.dataset.planSlotStart;
+    const sEnd = slotBtn.dataset.planSlotEnd;
+    const sDur = Number(slotBtn.dataset.planSlotDur || 60);
+    const sSub = slotBtn.dataset.planSlotSub;
+    const newTask = {
+      id: 'task-slot-' + Date.now(),
+      title: sSub ? ('Học ' + sSub) : 'Ca học mới',
+      subjectId: currentUser.subjects[0]?.id || null,
+      scheduledDate: sDate,
+      startTime: sStart,
+      endTime: sEnd,
+      durationMinutes: sDur,
+      status: 'planned'
+    };
+    currentUser.tasks.push(newTask);
+    saveLocalUser(currentUser);
+    persist();
+    renderApp();
+    addAskAIBubble('bot', '✓ Đã lên lịch ca học ' + newTask.title + ' vào ngày ' + sDate + ' (' + sStart + ' – ' + sEnd + ').');
+    toast('Đã lên lịch ca học thành công!', 'success');
+  }
+
+  /* P1.4: Execution Pulse & Daily / Weekly Review Delegates */
+  if (event.target.closest('#openDailyReviewBtn, #tewOpenReviewBtn, #tewOpenReviewBtnInside, #bannerDailyReviewBtn')) {
+    openDailyReviewModal(TODAY);
+  }
+  if (event.target.closest('#drOpenWeeklyBtn')) {
+    closeModal('dailyReviewModal');
+    openWeeklyReviewModal();
+  }
+  const applyRecBtn = event.target.closest('[data-apply-rec]');
+  if (applyRecBtn) {
+    applyLearnedRecommendation(applyRecBtn.dataset.applyRec, applyRecBtn.dataset.recVal);
+    const parentCard = applyRecBtn.closest('.dr-rec-card');
+    if (parentCard) {
+      const actionsDiv = parentCard.querySelector('.dr-rec-actions');
+      if (actionsDiv) actionsDiv.innerHTML = '<span class="status-pill green">✓ Đã áp dụng</span>';
+    }
+  }
+  const declineRecBtn = event.target.closest('[data-decline-rec]');
+  if (declineRecBtn) {
+    const parentCard = declineRecBtn.closest('.dr-rec-card');
+    if (parentCard) parentCard.remove();
+    toast('Đã bỏ qua đề xuất này.', 'info');
+  }
+  if (event.target.closest('#resetLearningBtn')) {
+    if (confirm('Bạn có chắc muốn đặt lại toàn bộ hệ số và đệm học tập về mặc định? Lịch sử ca học vẫn được bảo toàn nguyên vẹn.')) {
+      resetLearnedPreferences();
+    }
+  }
+  const tewStart = event.target.closest('[data-tew-start]');
+  if (tewStart) startTaskExecution(tewStart.dataset.tewStart);
+
+  const tewComp = event.target.closest('[data-tew-complete]');
+  if (tewComp) completeTaskExecution(tewComp.dataset.tewComplete);
+
+  const tewPost = event.target.closest('[data-tew-postpone]');
+  if (tewPost) postponeTaskExecution(tewPost.dataset.tewPostpone);
 
   const removePhotoBtn = event.target.closest('#removePhotoBtn');
   if (removePhotoBtn) {
@@ -3647,8 +4933,8 @@ document.addEventListener('click', event => {
     return;
   }
   const photoBox = event.target.closest('#notePhotoBox');
-  if (photoBox && !removePhotoBtn) {
-    $('#notePhotoInput').click();
+  if (photoBox && !removePhotoBtn && event.target !== $('#notePhotoInput')) {
+    $('#notePhotoInput')?.click();
   }
 
   const milestoneDel = event.target.closest('[data-delete-milestone]');
@@ -3756,7 +5042,29 @@ document.addEventListener('click', event => {
   }
 
   if (event.target.closest('#fixMyDayBtn')) {
+    console.log('[FixMyDay] Click event received on #fixMyDayBtn');
     handleFixMyDayClick();
+  }
+
+  const fmdTab = event.target.closest('.fmd-step-tab');
+  if (fmdTab) {
+    switchFmdStep(Number(fmdTab.dataset.fmdStep));
+  }
+
+  if (event.target.closest('#fmdSelectAllBtn')) {
+    setAllFmdChecks(true);
+  }
+
+  if (event.target.closest('#fmdDeselectAllBtn')) {
+    setAllFmdChecks(false);
+  }
+
+  if (event.target.closest('#fmdApplyAllBtn')) {
+    applyFixMyDay(false);
+  }
+
+  if (event.target.closest('#fmdApplySelectedBtn')) {
+    applyFixMyDay(true);
   }
 
   if (event.target.closest('#confirmAiPlanBtn')) {
@@ -3769,6 +5077,11 @@ document.addEventListener('input', event => {
   }
 });
 document.addEventListener('change', event => {
+  if (event.target.classList.contains('fmd-change-check')) {
+    const card = event.target.closest('.fmd-change-card');
+    if (card) card.classList.toggle('selected', event.target.checked);
+    updateFmdSelectedCount();
+  }
   if (event.target.id === 'importClassSelect') {
     const chosen = event.target.value;
     if (detectedMultiClasses && detectedMultiClasses[chosen]) {
@@ -3846,3 +5159,28 @@ setInterval(() => {
   if (newToday !== TODAY) { TODAY = newToday; scheduleViewDate = TODAY; if (currentUser) renderApp(); }
   if (currentUser) renderHeader();
 }, 60000);
+
+// P1.4: Change events for Daily Review date picker and Adaptive Learning toggle
+document.addEventListener('change', event => {
+  if (event.target && event.target.id === 'drDateInput') {
+    openDailyReviewModal(event.target.value);
+  }
+  if (event.target && event.target.id === 'adaptiveLearningToggle') {
+    if (!currentUser.settings) currentUser.settings = {};
+    if (!currentUser.settings.learnedPreferences) {
+      currentUser.settings.learnedPreferences = AdaptiveLearningUtil ? AdaptiveLearningUtil.getBasePreferences() : {};
+    }
+    currentUser.settings.learnedPreferences.enabled = event.target.checked;
+    persist();
+    renderSettings();
+    toast(`Đã ${event.target.checked ? 'bật' : 'tắt'} tính năng Học hỏi thích ứng.`, 'info');
+  }
+});
+
+
+document.addEventListener('keydown', (e) => {
+  if (e.target && e.target.id === 'askAIInput' && e.key === 'Enter') {
+    e.preventDefault();
+    submitAskAI(e.target.value);
+  }
+});

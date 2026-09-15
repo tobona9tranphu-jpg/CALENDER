@@ -159,6 +159,7 @@
   }
 
   return {
-    parseCaptureInput
+    parseCaptureInput,
+    parseShorthand: parseCaptureInput
   };
 }));

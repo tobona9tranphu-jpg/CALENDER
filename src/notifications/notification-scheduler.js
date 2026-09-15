@@ -167,11 +167,13 @@
         }
 
         const taskId = task.id;
-        const currentTaskSnapshot = `${task.title}|${task.date}|${task.priority}|${task.status}`;
+        // Support task.deadline, task.scheduledDate, or legacy task.date
+        const taskDeadline = task.deadline || task.scheduledDate || task.date || null;
+        const currentTaskSnapshot = `${task.title}|${taskDeadline}|${task.priority}|${task.status}`;
         this._lastKnownState.set(`task-${taskId}`, currentTaskSnapshot);
 
-        // Check overdue (task has a date earlier than today)
-        if (task.date && task.date < today) {
+        // Check overdue (task deadline is before today)
+        if (taskDeadline && taskDeadline < today) {
           const dedupeKey = generateDedupeKey({
             sourceType: 'task',
             sourceId: taskId,
@@ -180,13 +182,13 @@
           });
 
           if (!this.store.hasFiredKey(dedupeKey)) {
-            const daysOverdue = AppDate.diffAppCalendarDays(today, task.date);
+            const daysOverdue = AppDate.diffAppCalendarDays(today, taskDeadline);
             const notif = createNotification({
               type: NotificationType.TASK_OVERDUE,
               severity: NotificationSeverity.WARNING,
               priority: NotificationPriority.HIGH,
               title: `Nhiệm vụ quá hạn: ${task.title}`,
-              message: `Đã quá hạn ${daysOverdue} ngày (${AppDate.formatShortDate(task.date)}). Hãy hoàn thành hoặc điều chỉnh lịch.`,
+              message: `Đã quá hạn ${daysOverdue} ngày (${AppDate.formatShortDate(taskDeadline)}). Hãy hoàn thành hoặc điều chỉnh lịch.`,
               sourceType: 'task',
               sourceId: taskId,
               dedupeKey,
@@ -194,7 +196,7 @@
             });
             triggered.push(notif);
           }
-        } else if (task.date === today) {
+        } else if (taskDeadline === today) {
           // Due today
           const dedupeKey = generateDedupeKey({
             sourceType: 'task',
@@ -219,6 +221,7 @@
           }
         }
       }
+
 
       // 3. Check Spaced Repetition Reviews
       const reviewSchedules = Array.isArray(currentUser.reviewSchedules) ? currentUser.reviewSchedules : [];

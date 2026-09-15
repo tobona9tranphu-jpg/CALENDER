@@ -1,54 +1,967 @@
-@media (max-width: 600px) {
-  .sidebar.mobile-open {
-    display: flex;
-    width: 252px;
-    padding: 29px 17px 20px;
-    box-shadow: 18px 0 45px rgba(25, 25, 22, .2);
+/* ==========================================================================
+   TB SMART STUDY PLANNER — MOBILE HARDENING & RESPONSIVE STYLESHEET (P1.6-M)
+   Viewports: 320px, 360px, 375px, 390px, 403px, 414px, 430px, 768px, 1024px, 1440px
+   Rule: NO global scale/zoom. Full-width readable layout with comfortable touch.
+   ========================================================================== */
+
+/* ── 1. GLOBAL BASE & RESETS ─────────────────────────────────────────────── */
+
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+}
+
+/* Enforce HTML5 hidden attribute behavior regardless of class specificity */
+[hidden],
+.app-shell[hidden],
+#appShell[hidden],
+.auth-view[hidden],
+#authView[hidden] {
+  display: none !important;
+}
+
+html, body {
+  max-width: 100%;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+/* Eliminate 300ms tap delay and optimize touch responsiveness */
+button,
+a,
+input,
+select,
+textarea,
+.nav-link,
+.ask-chip,
+.qc-chip,
+.filter-chip,
+.fmd-step-tab,
+.check-button {
+  touch-action: manipulation;
+}
+
+/* ── 2. DESKTOP HEADER (> 768px): CLEAN UNIFIED BAR ──────────────────────── */
+
+.topbar {
+  height: 121px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.topbar-main {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.topbar-title {
+  min-width: 0;
+}
+
+.topbar-user-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-actions-primary,
+.header-actions-secondary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-action-pill {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ── 3. NATIVE FILE INPUT OVERLAY FOR 100% RELIABLE MOBILE UPLOAD ─────────── */
+
+.dropzone,
+.photo-uploader {
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+.dropzone input[type="file"],
+.photo-uploader input[type="file"] {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  opacity: 0 !important;
+  cursor: pointer !important;
+  z-index: 10 !important;
+  display: block !important;
+  -webkit-appearance: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  pointer-events: auto !important;
+}
+
+#browseTimetableBtn {
+  pointer-events: none !important;
+}
+
+.photo-preview-container {
+  position: relative !important;
+  z-index: 20 !important;
+}
+
+.remove-photo-btn {
+  position: relative !important;
+  z-index: 25 !important;
+}
+
+/* ── 4. TABLET & MOBILE (<= 768px): FULL-WIDTH, 3-TIER HEADER & READABLE UI ─ */
+
+@media (max-width: 768px) {
+
+  /* Main Container: Full width, safe area padding, natural margin */
+  .main-content {
+    margin-left: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    padding: 0 16px calc(72px + var(--sab)) !important;
+    min-width: 0 !important;
   }
 
-  .sidebar.mobile-open .brand { margin: 0 12px 40px; }
-  .sidebar.mobile-open .brand > span:last-child { display: block; }
-  .sidebar.mobile-open .nav-link { font-size: 13px; justify-content: flex-start; padding: 0 13px; gap: 14px; }
-  .sidebar.mobile-open .nav-count { position: static; margin-left: auto; font-size: 10px; }
-  .sidebar.mobile-open .student-profile > div:not(.avatar),
-  .sidebar.mobile-open .student-profile .more { display: block; }
+  /* Readable mobile typography */
+  body {
+    font-size: 15px !important;
+    line-height: 1.5 !important;
+  }
+
+  /* ── 3-TIER MOBILE HEADER ──────────────────────────────────────────────── */
+  .topbar {
+    height: auto !important;
+    min-height: auto !important;
+    padding: calc(12px + var(--sat)) 0 12px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    justify-content: flex-start !important;
+    gap: 12px !important;
+    max-width: 100% !important;
+  }
+
+  /* Row 1: [☰] Title & Date + (Notification / Profile on right) */
+  .topbar-main {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    width: 100% !important;
+    gap: 10px !important;
+  }
+
+  .mobile-menu {
+    display: flex !important;
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    align-items: center !important;
+    gap: 5px !important;
+    border: 0 !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin-right: 0 !important;
+    cursor: pointer !important;
+    flex-shrink: 0 !important;
+  }
+  .mobile-menu span {
+    width: 22px !important;
+    height: 2.5px !important;
+    background: #373631 !important;
+    border-radius: 1.5px !important;
+  }
+
+  .topbar-title {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+  }
+  .topbar-title .eyebrow {
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    color: #777771 !important;
+    letter-spacing: 0.05em !important;
+    text-transform: uppercase !important;
+    margin: 0 0 2px 0 !important;
+    display: block !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+  .topbar-title h1 {
+    font-size: 22px !important;
+    font-weight: 800 !important;
+    color: #242420 !important;
+    letter-spacing: -0.6px !important;
+    line-height: 1.2 !important;
+    margin: 0 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  .topbar-user-actions {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .round-button.notification {
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    border-radius: 50% !important;
+    border: 1px solid var(--line) !important;
+    background: #fff !important;
+    display: grid !important;
+    place-items: center !important;
+  }
+  .round-button.notification svg {
+    width: 20px !important;
+    height: 20px !important;
+  }
+
+  .profile-shortcut {
+    min-width: 44px !important;
+    min-height: 44px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 0 !important;
+  }
+  .profile-shortcut .avatar {
+    width: 38px !important;
+    height: 38px !important;
+    font-size: 14px !important;
+  }
+
+  /* Header Actions Container (Column holding Row 2 and Row 3) */
+  .header-actions {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Row 2: Primary Actions: [+ Quick Add] and [✦ Ask AI] (2-column balanced grid) */
+  .header-actions-primary {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px !important;
+    width: 100% !important;
+  }
+  .header-actions-primary .header-action-pill {
+    width: 100% !important;
+    min-height: 46px !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    border-radius: 12px !important;
+    padding: 10px 14px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    white-space: nowrap !important;
+    text-align: center !important;
+  }
+  #openQuickCaptureBtn {
+    background: #6458cc !important;
+    color: #fff !important;
+    box-shadow: 0 3px 10px rgba(100, 88, 204, 0.25) !important;
+  }
+  #openAskAIBtn {
+    background: #fbfaff !important;
+    border: 1px solid #d8d4ee !important;
+    color: #5c51ba !important;
+  }
+
+  /* Row 3: Secondary Actions: [📊 Daily Review] [📸 Take Note] [🎯 Kỳ thi] */
+  .header-actions-secondary {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    width: 100% !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    scrollbar-width: none !important;
+    padding: 2px 2px 4px !important;
+  }
+  .header-actions-secondary::-webkit-scrollbar {
+    display: none !important;
+  }
+  .header-actions-secondary .header-action-pill {
+    min-height: 40px !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    padding: 8px 16px !important;
+    border-radius: 20px !important;
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: #fff !important;
+    border: 1px solid var(--line) !important;
+    color: #4b4b45 !important;
+  }
+
+  /* ── 5. FULL-WIDTH CARDS & VERTICAL STACKING ────────────────────────────── */
+  .card,
+  .today-greeting-card,
+  .next-event-card,
+  .ai-ask-card,
+  .ask-ai-widget,
+  .action-card,
+  .today-execution-widget,
+  .today-timeline-section,
+  .exam-countdown-banner,
+  .mini-calendar,
+  .coach-card,
+  .inbox-board,
+  .subject-progress-card {
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .action-hub-grid,
+  .today-timeline-grid,
+  .progress-free-grid,
+  .fmd-comparison-container,
+  .dashboard-layout {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 16px !important;
+    width: 100% !important;
+  }
+
+  .dashboard-left,
+  .dashboard-right,
+  .today-sidebar-col {
+    width: 100% !important;
+    max-width: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 16px !important;
+  }
+
+  /* Today Greeting Card */
+  .today-greeting-card {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    padding: 20px 18px !important;
+    gap: 14px !important;
+    border-radius: 16px !important;
+    margin-bottom: 16px !important;
+  }
+
+  #todayGreeting {
+    font-size: 24px !important;
+    font-weight: 800 !important;
+    line-height: 1.25 !important;
+    margin: 0 0 4px 0 !important;
+  }
+  .today-date-sub {
+    font-size: 13px !important;
+    color: #777771 !important;
+    margin: 0 0 6px 0 !important;
+  }
+  .today-summary-line {
+    font-size: 14px !important;
+    color: #373631 !important;
+    line-height: 1.45 !important;
+    margin: 0 !important;
+  }
+
+  .today-header-quick-action,
+  .quick-action-btn {
+    width: 100% !important;
+  }
+  .quick-action-btn {
+    min-height: 44px !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    border-radius: 12px !important;
+    justify-content: center !important;
+  }
+
+  /* Next Event Banner */
+  .next-event-card {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    padding: 18px !important;
+    gap: 12px !important;
+    border-radius: 16px !important;
+    margin-bottom: 16px !important;
+  }
+
+  .next-event-indicator {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+  }
+  .next-badge {
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    padding: 3px 8px !important;
+    border-radius: 6px !important;
+  }
+
+  .next-event-body h3 {
+    font-size: 17px !important;
+    font-weight: 700 !important;
+    line-height: 1.35 !important;
+    margin: 0 0 4px 0 !important;
+  }
+  .next-event-body p {
+    font-size: 13.5px !important;
+    color: #777771 !important;
+    margin: 0 !important;
+  }
+
+  .next-event-countdown {
+    text-align: left !important;
+    border-top: 1px dashed #e8e7e1 !important;
+    padding-top: 10px !important;
+    display: flex !important;
+    align-items: baseline !important;
+    gap: 6px !important;
+  }
+  .next-event-countdown strong {
+    font-size: 26px !important;
+  }
+  .next-event-countdown small {
+    font-size: 12px !important;
+  }
+
+  /* Action Hub & Recommended Card */
+  .action-card {
+    padding: 18px !important;
+    border-radius: 16px !important;
+  }
+
+  .kicker-tag {
+    font-size: 12px !important;
+    font-weight: 700 !important;
+  }
+
+  .recommend-title-wrap {
+    display: flex !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+    margin: 12px 0 16px !important;
+  }
+  .recommend-title-wrap h3 {
+    font-size: 17px !important;
+    font-weight: 700 !important;
+    line-height: 1.35 !important;
+    margin: 0 0 4px 0 !important;
+  }
+  .recommend-rationale {
+    font-size: 13.5px !important;
+    line-height: 1.45 !important;
+  }
+
+  .recommend-footer {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+  .start-study-btn {
+    width: 100% !important;
+    min-height: 46px !important;
+    font-size: 14.5px !important;
+    font-weight: 700 !important;
+    border-radius: 12px !important;
+    justify-content: center !important;
+  }
+  #skipRecommendedBtn {
+    min-height: 40px !important;
+    font-size: 13.5px !important;
+    text-align: center !important;
+  }
+
+  /* Progress Free Grid */
+  .progress-free-grid {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 14px !important;
+    margin-top: 12px !important;
+  }
+  .progress-meter-box,
+  .free-time-box {
+    width: 100% !important;
+    padding: 14px 16px !important;
+    border-radius: 12px !important;
+  }
+
+  /* Today Execution Widget (TEW) */
+  .today-execution-widget {
+    padding: 18px !important;
+    border-radius: 16px !important;
+    margin-bottom: 16px !important;
+  }
+  .tew-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 8px !important;
+  }
+  .tew-title {
+    font-size: 16px !important;
+    font-weight: 700 !important;
+  }
+  .tew-link-btn {
+    font-size: 13.5px !important;
+    min-height: 36px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+  }
+  .tew-metrics-bar {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr 1fr !important;
+    gap: 8px !important;
+    padding: 12px !important;
+    text-align: center !important;
+  }
+  .tew-metric-divider {
+    display: none !important;
+  }
+  .tew-metric-num {
+    font-size: 17px !important;
+  }
+  .tew-metric-lbl {
+    font-size: 12px !important;
+  }
+
+  .tew-active-task-box {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 12px !important;
+  }
+  .tew-active-actions {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr 1fr !important;
+    gap: 6px !important;
+    width: 100% !important;
+  }
+  .tew-active-actions .small-btn {
+    min-height: 42px !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    padding: 8px 6px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+  }
+
+  /* Exam Countdown Mini Banner */
+  .exam-countdown-banner {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 14px !important;
+    padding: 18px !important;
+    border-radius: 16px !important;
+  }
+  .countdown-badge {
+    font-size: 12px !important;
+    font-weight: 700 !important;
+  }
+  #countdownExamTitle {
+    font-size: 17px !important;
+    font-weight: 700 !important;
+    margin: 4px 0 !important;
+  }
+  #countdownExamSubjects {
+    font-size: 13px !important;
+    color: #64748b !important;
+    margin: 0 !important;
+  }
+  .countdown-timer {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    width: 100% !important;
+    border-top: 1px dashed #dfdaf5 !important;
+    padding-top: 12px !important;
+  }
+  .countdown-days strong {
+    font-size: 26px !important;
+  }
+  .countdown-days span {
+    font-size: 12px !important;
+  }
+  #manageExamsBtn {
+    min-height: 42px !important;
+    font-size: 13.5px !important;
+    padding: 8px 16px !important;
+  }
+
+  /* Timeline & Mini-calendar */
+  .today-timeline-section {
+    padding: 18px !important;
+    border-radius: 16px !important;
+  }
+  .mini-calendar {
+    padding: 18px !important;
+    border-radius: 16px !important;
+  }
+
+  /* ── 6. AI TIME ASSISTANT CARD ──────────────────────────────────────────── */
+  .ai-ask-card,
+  .ask-ai-widget {
+    width: 100% !important;
+    padding: 18px !important;
+    border-radius: 16px !important;
+    margin-bottom: 16px !important;
+    box-sizing: border-box !important;
+  }
+
+  .ai-ask-header,
+  .ask-ai-header {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    margin-bottom: 12px !important;
+  }
+
+  .ai-ask-kicker,
+  .ask-ai-title {
+    font-size: 15px !important;
+    font-weight: 700 !important;
+  }
+
+  .ai-status-pill,
+  .ask-ai-badge {
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    padding: 4px 10px !important;
+    border-radius: 12px !important;
+  }
+
+  .ask-ai-subtitle {
+    font-size: 13.5px !important;
+    line-height: 1.45 !important;
+    color: #55534e !important;
+    margin-bottom: 14px !important;
+  }
+
+  /* Input and Button on separate lines on mobile for maximum readability */
+  .ai-input-group,
+  .ask-ai-input-bar {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+    width: 100% !important;
+  }
+
+  .ai-ask-input,
+  .ask-ai-input,
+  #aiAskInput,
+  #askAIInput {
+    width: 100% !important;
+    height: 48px !important;
+    font-size: 16px !important; /* >= 16px prevents iOS auto-zoom */
+    border-radius: 12px !important;
+    padding: 0 16px !important;
+    box-sizing: border-box !important;
+    border: 1.5px solid #d4d0ee !important;
+    background: #fff !important;
+    color: #242420 !important;
+  }
+
+  .ai-submit-btn,
+  .ask-ai-send-btn,
+  #aiAskBtn,
+  #askAISendBtn {
+    width: 100% !important;
+    min-height: 46px !important;
+    font-size: 14.5px !important;
+    font-weight: 700 !important;
+    border-radius: 12px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    background: #6458cc !important;
+    color: #fff !important;
+    cursor: pointer !important;
+    border: 0 !important;
+  }
+
+  .ai-ask-hint {
+    font-size: 12.5px !important;
+    line-height: 1.5 !important;
+    color: #6b6a65 !important;
+    margin-top: 10px !important;
+  }
+
+  .ask-ai-chips {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    margin-bottom: 14px !important;
+  }
+  .ask-chip {
+    min-height: 38px !important;
+    padding: 8px 14px !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    border-radius: 20px !important;
+    flex-shrink: 0 !important;
+  }
+
+  /* ── 7. TASK CARDS & LISTS ──────────────────────────────────────────────── */
+  .task-list {
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .task-row {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    align-items: center !important;
+    gap: 12px !important;
+    padding: 14px 10px !important;
+    min-height: 68px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    border-bottom: 1px solid var(--line) !important;
+  }
+
+  .check-button {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    min-height: 32px !important;
+    flex-shrink: 0 !important;
+    position: relative !important;
+  }
+  .check-button::after {
+    content: '' !important;
+    position: absolute !important;
+    top: -8px !important;
+    left: -8px !important;
+    right: -8px !important;
+    bottom: -8px !important;
+  }
+
+  .task-category {
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px !important;
+    font-size: 12px !important;
+    border-radius: 10px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .task-main {
+    flex: 1 1 180px !important;
+    min-width: 0 !important;
+  }
+
+  .task-main h3 {
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    line-height: 1.4 !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+    margin: 0 0 4px 0 !important;
+    color: #242420 !important;
+  }
+
+  .task-main p {
+    font-size: 13px !important;
+    color: #777771 !important;
+    line-height: 1.4 !important;
+    margin: 0 !important;
+  }
+
+  .priority-label {
+    display: inline-block !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    padding: 4px 10px !important;
+    border-radius: 12px !important;
+    flex-shrink: 0 !important;
+  }
+
+  /* ── 8. FLOATING ACTION BUTTON ──────────────────────────────────────────── */
+  .fab-quick-add {
+    position: fixed !important;
+    bottom: calc(18px + var(--sab)) !important;
+    right: 18px !important;
+    width: 56px !important;
+    height: 56px !important;
+    min-width: 56px !important;
+    min-height: 56px !important;
+    border-radius: 50% !important;
+    background: #6458cc !important;
+    color: #fff !important;
+    border: 0 !important;
+    box-shadow: 0 6px 24px rgba(100, 88, 204, 0.4) !important;
+    display: grid !important;
+    place-items: center !important;
+    font-size: 28px !important;
+    cursor: pointer !important;
+    z-index: 900 !important;
+    touch-action: manipulation !important;
+  }
+
+  /* ── 9. TOUCH TARGET SIZES & INPUTS ─────────────────────────────────────── */
+  .primary-button,
+  .outline-button,
+  .soft-button {
+    min-height: 44px !important;
+    font-size: 14px !important;
+  }
+
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="time"],
+  input[type="date"],
+  select,
+  textarea {
+    font-size: 16px !important; /* >= 16px prevents iOS auto-zoom */
+  }
+
+  /* ── 10. MODALS & OTHER VIEWS ───────────────────────────────────────────── */
+  .modal-backdrop {
+    padding: 10px !important;
+  }
+  .modal-card,
+  .form-modal,
+  .study-modal,
+  .what-if-modal,
+  .task-modal,
+  .fix-my-day-card,
+  .daily-review-card,
+  .weekly-review-card,
+  .onboarding-modal,
+  .plan-inbox-modal,
+  .ai-review-modal {
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: min(92dvh, calc(100vh - 16px)) !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding: 20px 18px !important;
+    border-radius: 16px !important;
+    box-sizing: border-box !important;
+  }
+
+  .modal-close,
+  [data-close-modal],
+  .icon-button {
+    min-width: 44px !important;
+    min-height: 44px !important;
+    display: inline-grid !important;
+    place-items: center !important;
+  }
+
+  /* Mobile Drawer */
+  .sidebar {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(280px, 80vw) !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    background: #fbfbf9;
+    box-shadow: 20px 0 50px rgba(0, 0, 0, 0.25);
+    z-index: 1000;
+    padding: calc(24px + var(--sat)) 16px calc(24px + var(--sab)) !important;
+    overflow-y: auto;
+  }
+  .sidebar.mobile-open {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+  .sidebar.mobile-open .brand {
+    margin: 0 12px 28px !important;
+    font-size: 24px !important;
+  }
+  .sidebar.mobile-open .nav-link {
+    font-size: 15px !important;
+    height: 48px !important;
+  }
+
+  /* Notifications Popover */
+  #notificationPopover,
+  .notification-popover {
+    position: fixed !important;
+    top: calc(60px + var(--sat)) !important;
+    left: 12px !important;
+    right: 12px !important;
+    width: auto !important;
+    max-width: 420px !important;
+    margin: 0 auto !important;
+    max-height: 75dvh !important;
+    overflow-y: auto !important;
+    border-radius: 16px !important;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.22) !important;
+    z-index: 1050 !important;
+  }
+
+  /* Week schedule table scroll on mobile */
+  .week-schedule {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+  .calendar-board,
+  .week-header {
+    min-width: 540px !important;
+  }
 }
 
-.onboarding-modal {
-  position: relative;
-  width: min(100%, 455px);
-  min-height: 495px;
-  padding: 32px 36px;
-  border-radius: 20px;
-  background: #fbfbf8;
-  box-shadow: 0 22px 70px rgba(15, 15, 12, .25);
-}
-
-.onboarding-brand { margin: 0; font-size: 22px; }
-.onboarding-brand .brand-mark { transform: scale(.84); transform-origin: left center; margin-right: -4px; }
-.onboarding-dots { display: flex; gap: 5px; margin: 27px 0 36px; }
-.onboarding-dots i { width: 20px; height: 3px; border-radius: 5px; background: #e6e4dd; }
-.onboarding-dots i.active { background: #6b60cc; }
-.onboarding-step { display: none; min-height: 264px; }
-.onboarding-step.active { display: block; }
-.onboarding-step h2 { margin: 7px 0 11px; font: 600 35px/1.05 Newsreader, Georgia, serif; letter-spacing: -.9px; }
-.onboarding-step h2 em { color: #685ccd; font-weight: 500; }
-.onboarding-step > p:not(.eyebrow) { margin: 0; color: #77756e; font-size: 11px; line-height: 1.65; }
-.onboarding-field { display: grid; gap: 6px; margin-top: 31px; color: #79766e; font-size: 10px; }
-.onboarding-field input { width: 100%; border: 0; border-bottom: 1px solid #bdbab0; background: transparent; padding: 7px 0; outline: 0; color: #373631; font: 600 18px Manrope, sans-serif; }
-.onboarding-field input:focus { border-color: #675bcb; }
-.subject-choice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 22px; }
-.subject-choice-grid button { height: 47px; border: 1px solid #e4e2dc; border-radius: 9px; background: #fff; display: flex; align-items: center; gap: 8px; padding: 7px; font-size: 11px; font-weight: 700; text-align: left; }
-.subject-choice-grid button.chosen { border-color: #d3ceef; background: #fbfaff; }
-.subject-choice-grid .subject-orb { width: 29px; height: 29px; font-size: 13px; }
-.add-choice { display: grid; place-items: center; width: 29px; height: 29px; border-radius: 50%; background: #f0efeb; color: #77746c; font-size: 17px; font-weight: 400; }
-.availability { margin-top: 25px; border-radius: 11px; background: #efede4; padding: 17px; }
-.availability span { display: block; color: #77746e; font-size: 10px; }
-.availability strong { display: block; margin: 5px 0 7px; font-size: 18px; letter-spacing: -.5px; }
-.availability small { color: #8c8981; font-size: 9px; }
-.onboarding-next { margin-top: 3px; }
-
-@media (max-width: 600px) {
-  .onboarding-modal { min-height: 480px; padding: 28px 23px; }
-  .onboarding-step h2 { font-size: 31px; }
+/* ── 5. EXTRA COMPACT PHONES (<= 360px) ─────────────────────────────────── */
+@media (max-width: 360px) {
+  .header-actions-primary .header-action-pill {
+    font-size: 13px !important;
+    padding: 8px 10px !important;
+  }
+  .topbar-title h1 {
+    font-size: 20px !important;
+  }
+  #todayGreeting {
+    font-size: 22px !important;
+  }
 }

@@ -133,7 +133,7 @@ app.use(express.static(ROOT, {
   index: 'index.html',
   setHeaders(res, filePath) {
     // Prevent caching HTML to avoid stale auth state after logout
-    if (filePath.endsWith('.html')) {
+    if (filePath.endsWith('.html') || filePath.endsWith('.css') || filePath.endsWith('.js')) {
       res.setHeader('Cache-Control', 'no-store');
     }
   },

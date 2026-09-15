@@ -1,28 +1,32 @@
-﻿'use strict';
+'use strict';
 
 /**
  * @file deadline-intelligence.js
- * Deterministic Deadline Intelligence Engine.
+ * Deterministic Deadline Intelligence Engine (Product Phase P1.3).
  *
- * Evaluates deadline risk levels based on deterministic capacity calculations:
- *   Risk Tiers:
- *   - 'safe':        Capacity >= 1.4x required effort
- *   - 'watch':       Capacity 1.0x - 1.4x required effort (acceptable buffer)
- *   - 'at_risk':     Capacity 0.7x - 1.0x required effort (tight, little room for delay)
- *   - 'critical':    Capacity 0.3x - 0.7x required effort (requires prompt rescheduling)
- *   - 'impossible':  Capacity < 0.3x required effort or deadline already passed
+ * Evaluates deadline urgency levels based on deterministic capacity calculations:
+ *   Urgency Tiers:
+ *   - 'overdue':   Deadline has already passed (daysLeft < 0)
+ *   - 'critical':  Insufficient capacity (< 0.7x required duration) or due today without enough time
+ *   - 'urgent':    Capacity is very tight (0.7x - 1.2x required duration)
+ *   - 'upcoming':  Capacity is moderate (1.2x - 1.5x required duration), due within 2-3 days
+ *   - 'safe':      Capacity is ample (>= 1.5x required duration)
  *
- * Generates human-readable, explainable Vietnamese explanations with exact durations.
+ * Features:
+ * - Flags deadlineRisk = true when task is at risk.
+ * - Factors in task duration, days remaining, free capacity, priority, fixed events.
+ * - Generates human-readable, explainable Vietnamese explanations with exact durations.
  */
 
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
     const AppDate = require('../utils/date');
-    module.exports = factory(AppDate);
+    const CapacityEngine = require('./capacity-engine');
+    module.exports = factory(AppDate, CapacityEngine);
   } else {
-    root.DeadlineIntelligence = factory(root.AppDate);
+    root.DeadlineIntelligence = factory(root.AppDate, root.CapacityEngine);
   }
-}(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this), function (DateUtil) {
+}(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this), function (DateUtil, CapacityEngine) {
 
   function minFromTime(t) {
     if (DateUtil && typeof DateUtil.minFromTime === 'function') return DateUtil.minFromTime(t);
@@ -51,10 +55,17 @@
   }
 
   /**
-   * Calculates free availability in minutes on a given date taking into account
+   * Calculates free capacity in minutes on a given date taking into account
    * fixed events and current time if the date is today.
    */
   function getDailyCapacityMinutes(date, context, currentTimeMin = null) {
+    if (CapacityEngine && typeof CapacityEngine.analyzeCapacity === 'function') {
+      const cap = CapacityEngine.analyzeCapacity(date, context, {
+        currentTime: currentTimeMin !== null ? (DateUtil && DateUtil.timeFromMin ? DateUtil.timeFromMin(currentTimeMin) : null) : null
+      });
+      return cap.freeMinutes;
+    }
+
     const avail = context.availability || { start: '15:00', end: '21:30' };
     let startMin = minFromTime(avail.start || '15:00');
     const endMin = minFromTime(avail.end || '21:30');
@@ -93,9 +104,20 @@
     const milestones = context.deadlines || [];
 
     const items = [];
-    const RISK_RANKS = { impossible: 5, critical: 4, at_risk: 3, watch: 2, safe: 1 };
+    const URGENCY_RANKS = {
+      overdue: 5,
+      critical: 4,
+      urgent: 3,
+      upcoming: 2,
+      safe: 1,
+      // Synonyms for backwards compatibility
+      impossible: 5,
+      at_risk: 3,
+      watch: 2
+    };
+
     let maxRank = 1;
-    let highestRisk = 'safe';
+    let highestUrgency = 'safe';
 
     // 1. Evaluate tasks with an explicit deadline
     for (const task of tasks) {
@@ -115,12 +137,17 @@
           requiredMinutes: duration,
           availableCapacityMinutes: 0,
           ratio: 0,
-          risk: 'impossible',
+          urgency: 'overdue',
+          risk: 'overdue', // compatible
+          deadlineRisk: true,
           message: `Hạn chót cho "${task.title}" đã trôi qua (${deadline}).`,
           explanation: `Cần ${formatDurationVi(duration)} nhưng hạn chót đã quá hạn.`
         };
         items.push(item);
-        if (RISK_RANKS.impossible > maxRank) { maxRank = RISK_RANKS.impossible; highestRisk = 'impossible'; }
+        if (URGENCY_RANKS.overdue > maxRank) {
+          maxRank = URGENCY_RANKS.overdue;
+          highestUrgency = 'overdue';
+        }
         continue;
       }
 
@@ -132,20 +159,34 @@
       }
 
       const ratio = duration > 0 ? totalCapacity / duration : 10;
-      let risk = 'safe';
-      if (ratio < 0.3 || totalCapacity < duration * 0.3) {
-        risk = 'impossible';
-      } else if (ratio < 0.7) {
-        risk = 'critical';
-      } else if (ratio < 1.0) {
-        risk = 'at_risk';
-      } else if (ratio < 1.4) {
-        risk = 'watch';
+      let urgency = 'safe';
+
+      if (daysLeft === 0) {
+        // Due today!
+        if (totalCapacity < duration) {
+          urgency = 'critical';
+        } else if (totalCapacity < duration * 1.2) {
+          urgency = 'urgent';
+        } else if (totalCapacity < duration * 1.5) {
+          urgency = 'upcoming';
+        } else {
+          urgency = 'safe';
+        }
+      } else if (ratio < 0.7 || totalCapacity < duration * 0.7) {
+        urgency = 'critical';
+      } else if (ratio < 1.2) {
+        urgency = 'urgent';
+      } else if (ratio < 1.5) {
+        urgency = 'upcoming';
+      } else {
+        urgency = 'safe';
       }
 
-      if (RISK_RANKS[risk] > maxRank) {
-        maxRank = RISK_RANKS[risk];
-        highestRisk = risk;
+      const isRisk = urgency === 'overdue' || urgency === 'critical' || urgency === 'urgent';
+
+      if (URGENCY_RANKS[urgency] > maxRank) {
+        maxRank = URGENCY_RANKS[urgency];
+        highestUrgency = urgency;
       }
 
       const reqStr = formatDurationVi(duration);
@@ -153,13 +194,13 @@
       let message = `"${task.title}" có tiến độ an toàn trước hạn ${deadline}.`;
       let explanation = `Cần ${reqStr}, hiện còn ${capStr} khả dụng.`;
 
-      if (risk === 'impossible' || risk === 'critical') {
-        message = `⚠️ Không đủ thời gian để hoàn thành "${task.title}" trước ${deadline}.`;
-        explanation = `Cần ${reqStr} nhưng chỉ còn ${capStr} khả dụng trước hạn chót.`;
-      } else if (risk === 'at_risk') {
-        message = `⚠️ Khung giờ học cho "${task.title}" rất sát hạn chót (${deadline}).`;
+      if (urgency === 'critical') {
+        message = `⚠️ Không đủ thời gian hoàn thành "${task.title}" trước hạn (${deadline}).`;
+        explanation = `Cần ${reqStr} nhưng chỉ còn ${capStr} dung lượng rảnh trước hạn chót.`;
+      } else if (urgency === 'urgent') {
+        message = `⚠️ Dung lượng học cho "${task.title}" rất sát hạn chót (${deadline}).`;
         explanation = `Cần ${reqStr} trong khi tổng dung lượng rảnh chỉ là ${capStr}.`;
-      } else if (risk === 'watch') {
+      } else if (urgency === 'upcoming') {
         message = `Cần chú ý tiến độ của "${task.title}" (hạn: ${deadline}).`;
         explanation = `Cần ${reqStr}, khả dụng ${capStr} (đệm thời gian vừa đủ).`;
       }
@@ -172,7 +213,9 @@
         requiredMinutes: duration,
         availableCapacityMinutes: totalCapacity,
         ratio: Math.round(ratio * 100) / 100,
-        risk,
+        urgency,
+        risk: urgency, // compatible
+        deadlineRisk: isRisk,
         message,
         explanation
       });
@@ -183,21 +226,25 @@
       if (!ms || !ms.date) continue;
       const daysLeft = diffDays(ms.date, curDate);
       if (daysLeft >= 0 && daysLeft <= 3) {
-        if (RISK_RANKS.at_risk > maxRank) {
-          maxRank = RISK_RANKS.at_risk;
-          if (highestRisk === 'safe' || highestRisk === 'watch') highestRisk = 'at_risk';
+        if (URGENCY_RANKS.urgent > maxRank) {
+          maxRank = URGENCY_RANKS.urgent;
+          if (highestUrgency === 'safe' || highestUrgency === 'upcoming') {
+            highestUrgency = 'urgent';
+          }
         }
       }
     }
 
-    const isSafe = highestRisk === 'safe' || highestRisk === 'watch';
+    const isSafe = highestUrgency === 'safe' || highestUrgency === 'upcoming';
+    const hasAtRisk = highestUrgency === 'urgent' || highestUrgency === 'critical' || highestUrgency === 'overdue';
 
     return {
       items,
-      highestRisk,
+      highestUrgency,
+      highestRisk: highestUrgency, // compatible
       isSafe,
       totalCount: items.length,
-      hasAtRisk: highestRisk === 'at_risk' || highestRisk === 'critical' || highestRisk === 'impossible'
+      hasAtRisk
     };
   }
 

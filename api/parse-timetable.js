@@ -67,7 +67,28 @@ function validateSlots(value) {
   for (let index = 0; index < value.length; index += 1) {
     const slot = value[index];
     if (!slot || typeof slot !== 'object') continue;
-    let day = Number(slot.day);
+    let day;
+    if (typeof slot.day === 'number') {
+      day = (slot.day === 7 || slot.day === 8) ? 0 : slot.day;
+    } else {
+      const s = String(slot.day || '').trim().toLowerCase();
+      if (s.includes('chủ nhật') || s.includes('cn') || s === '8' || s === '0' || s === 't8') day = 0;
+      else if (s.includes('thứ 2') || s === 't2' || s === '2') day = 1;
+      else if (s.includes('thứ 3') || s === 't3' || s === '3') day = 2;
+      else if (s.includes('thứ 4') || s === 't4' || s === '4') day = 3;
+      else if (s.includes('thứ 5') || s === 't5' || s === '5') day = 4;
+      else if (s.includes('thứ 6') || s === 't6' || s === '6') day = 5;
+      else if (s.includes('thứ 7') || s === 't7' || s === '7') day = 6;
+      else {
+        const m = s.match(/\d+/);
+        if (m) {
+          const n = parseInt(m[0], 10);
+          day = (n === 8 || n === 7 || n === 0) ? 0 : ((n >= 2 && n <= 7) ? n - 1 : n);
+        } else {
+          day = Number(slot.day);
+        }
+      }
+    }
     const title = typeof slot.title === 'string' ? slot.title.trim() : '';
     let start = typeof slot.start === 'string' ? slot.start.trim() : '';
     let end = typeof slot.end === 'string' ? slot.end.trim() : '';
@@ -76,8 +97,6 @@ function validateSlots(value) {
     if (/^\d:[0-5]\d$/.test(start)) start = '0' + start;
     if (/^\d:[0-5]\d$/.test(end)) end = '0' + end;
 
-    // Day: 0..7 where 7 is Sunday. Normalize 7 -> 0 for consistency with calendar app
-    if (day === 7) day = 0;
     if (!Number.isInteger(day) || day < 0 || day > 6) continue;
     if (!title) continue;
     if (!TIME_PATTERN.test(start) || !TIME_PATTERN.test(end)) continue;
@@ -165,7 +184,7 @@ module.exports = async function handler(req, res) {
   if (preflight(req, res)) return;
   if (req.method !== 'POST') return send(res, 405, { error: 'Method not allowed.' });
   try {
-    const body = await readBody(req);
+    const body = await readBody(req, 4.5 * 1024 * 1024);
     const image = typeof body.image === 'string' ? body.image.replace(/^data:[^;]+;base64,/, '') : '';
     const mimeType = typeof body.mimeType === 'string' ? body.mimeType.toLowerCase() : '';
     if (!image || !/^image\/(png|jpeg|jpg|webp)$/.test(mimeType)) {

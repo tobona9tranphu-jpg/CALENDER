@@ -135,9 +135,12 @@ describe('P1.3 — Smart Reschedule + Conflict Intelligence + Deadline Intellige
       ];
       const result = detectConflicts(tasks, ctx);
       expect(result.hasHardConflicts).toBe(true);
-      const overlap = result.hardConflicts.find(c => c.type === 'FIXED_EVENT_OVERLAP');
+      const overlap = result.hardConflicts.find(c => c.category === 'FIXED_EVENT_OVERLAP');
       expect(overlap).toBeDefined();
+      expect(overlap.type).toBe('hard');
       expect(overlap.severity).toBe('critical');
+      expect(overlap.eventIds).toContain('fe1');
+      expect(overlap.suggestedAction).toBeDefined();
       expect(overlap.message).toContain('Lớp Anh cố định');
     });
 
@@ -150,9 +153,11 @@ describe('P1.3 — Smart Reschedule + Conflict Intelligence + Deadline Intellige
       ];
       const result = detectConflicts(tasks, ctx);
       expect(result.hasHardConflicts).toBe(true);
-      const availConf = result.hardConflicts.find(c => c.type === 'AVAILABILITY_VIOLATION');
+      const availConf = result.hardConflicts.find(c => c.category === 'AVAILABILITY_VIOLATION');
       expect(availConf).toBeDefined();
+      expect(availConf.type).toBe('hard');
       expect(availConf.severity).toBe('high');
+      expect(availConf.suggestedAction).toBeDefined();
     });
 
     test('detects HARD conflict: internal task collision on same day', () => {
@@ -163,8 +168,11 @@ describe('P1.3 — Smart Reschedule + Conflict Intelligence + Deadline Intellige
       ];
       const result = detectConflicts(tasks, ctx);
       expect(result.hasHardConflicts).toBe(true);
-      const internalConf = result.hardConflicts.find(c => c.type === 'INTERNAL_OVERLAP');
+      const internalConf = result.hardConflicts.find(c => c.category === 'INTERNAL_OVERLAP');
       expect(internalConf).toBeDefined();
+      expect(internalConf.type).toBe('hard');
+      expect(internalConf.taskIds).toContain('t1');
+      expect(internalConf.taskIds).toContain('t2');
       expect(internalConf.affectedActionIds).toContain('t1');
       expect(internalConf.affectedActionIds).toContain('t2');
     });
@@ -176,9 +184,11 @@ describe('P1.3 — Smart Reschedule + Conflict Intelligence + Deadline Intellige
         { id: 't2', title: 'Học Lý', scheduledDate: TEST_DATE, startTime: '16:02', endTime: '17:00', durationMinutes: 58 }
       ];
       const result = detectConflicts(tasks, ctx);
-      const breakConf = result.softConflicts.find(c => c.type === 'INSUFFICIENT_BREAK');
+      const breakConf = result.softConflicts.find(c => c.category === 'INSUFFICIENT_BREAK');
       expect(breakConf).toBeDefined();
+      expect(breakConf.type).toBe('soft');
       expect(breakConf.severity).toBe('medium');
+      expect(breakConf.suggestedAction).toBeDefined();
     });
 
     test('detects SOFT conflict: overloaded day (> 5 hours study)', () => {
@@ -188,8 +198,11 @@ describe('P1.3 — Smart Reschedule + Conflict Intelligence + Deadline Intellige
         { id: 't2', title: 'Lý', scheduledDate: TEST_DATE, startTime: '14:00', endTime: '18:00', durationMinutes: 240 }
       ];
       const result = detectConflicts(tasks, ctx);
-      const overloadConf = result.softConflicts.find(c => c.type === 'OVERLOADED_DAY');
+      const overloadConf = result.softConflicts.find(c => c.category === 'OVERLOADED_DAY');
       expect(overloadConf).toBeDefined();
+      expect(overloadConf.type).toBe('soft');
+      expect(overloadConf.severity).toBe('high');
+      expect(overloadConf.suggestedAction).toBeDefined();
     });
   });
 

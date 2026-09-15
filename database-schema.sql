@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS user_settings (
   user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   reminders BOOLEAN NOT NULL DEFAULT TRUE,
-  coach BOOLEAN NOT NULL DEFAULT TRUE
+  coach BOOLEAN NOT NULL DEFAULT TRUE,
+  learned_preferences JSONB DEFAULT '{}'::jsonb
 );
 
 CREATE TABLE IF NOT EXISTS availability_days (
@@ -58,7 +59,15 @@ CREATE TABLE IF NOT EXISTS tasks (
   minutes INTEGER NOT NULL,
   priority SMALLINT NOT NULL DEFAULT 3 CHECK (priority BETWEEN 1 AND 5),
   status TEXT NOT NULL DEFAULT 'open',
-  created_at DATE NOT NULL
+  created_at DATE NOT NULL,
+  scheduled_date DATE,
+  start_time TIME,
+  end_time TIME,
+  duration_minutes INTEGER,
+  actual_start TIME,
+  actual_end TIME,
+  actual_duration INTEGER,
+  postponed_to DATE
 );
 
 CREATE TABLE IF NOT EXISTS fixed_schedules (
@@ -135,5 +144,7 @@ CREATE TABLE IF NOT EXISTS schedule_changes (
 );
 
 CREATE INDEX IF NOT EXISTS tasks_user_status_idx ON tasks(user_id, status);
+CREATE INDEX IF NOT EXISTS tasks_user_scheduled_date_idx ON tasks(user_id, scheduled_date);
+CREATE INDEX IF NOT EXISTS tasks_user_deadline_idx ON tasks(user_id, deadline);
 CREATE INDEX IF NOT EXISTS sessions_user_date_idx ON study_sessions(user_id, study_date);
 CREATE INDEX IF NOT EXISTS reviews_user_due_idx ON review_schedules(user_id, due) WHERE status = 'scheduled';

@@ -28,19 +28,32 @@ module.exports = async function handler(req, res) {
 
       // Run through data integrity pipeline to normalize and validate schedules/tasks
       const processed = DataIntegrity.processUserDataPipeline(body);
+      const sanitized = (processed && processed.data) ? processed.data : body;
 
       const updated = {
-        ...processed,
+        ...sanitized,
         id: current.id,
         email: current.email,
         passwordHash: current.passwordHash
       };
+
+      console.log('[USER API PUT] Saving user to database:', {
+        userId,
+        fixedSchedules: updated.fixedSchedules?.length,
+        tasks: updated.tasks?.length,
+        subjects: updated.subjects?.length
+      });
+
       const saved = await replaceUser(updated);
       return send(res, 200, { user: safeUser(saved) });
     }
     return send(res, 405, { error: 'Method not allowed.' });
   } catch (error) {
     console.error('user route failed', error);
-    return send(res, 400, { error: 'Dữ liệu không hợp lệ.' });
+    // Validation errors are thrown with an explicit .status / .statusCode of 400.
+    // Everything else (DB failure, unexpected crash) is a server error → 500.
+    const status = (error.status === 400 || error.statusCode === 400 || error.isValidationError) ? 400 : 500;
+    const message = status === 400 ? (error.message || 'Dữ liệu không hợp lệ.') : 'Đã xảy ra lỗi máy chủ. Vui lòng thử lại.';
+    return send(res, status, { error: message });
   }
 };

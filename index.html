@@ -2,16 +2,16 @@
 <html lang="vi">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#f8f8f6" />
     <title>TB — Smart Study Planner</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css" />
-    <link rel="stylesheet" href="./mobile.css" />
-    <link rel="stylesheet" href="./enhancements.css" />
-    <link rel="stylesheet" href="./conflict.css" />
+    <link rel="stylesheet" href="./styles.css?v=1.6.1" />
+    <link rel="stylesheet" href="./enhancements.css?v=1.6.1" />
+    <link rel="stylesheet" href="./conflict.css?v=1.6.1" />
+    <link rel="stylesheet" href="./mobile.css?v=1.6.1" />
     <script src="./jszip.min.js"></script>
     <script>if(typeof JSZip==='undefined'){document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"><\/script>');}</script>
   </head>
@@ -37,7 +37,30 @@
       </aside>
 
       <main class="main-content">
-        <header class="topbar"><button class="mobile-menu" aria-label="Mở điều hướng"><span></span><span></span></button><div><p class="eyebrow" id="headerDate"></p><h1 id="pageTitle"></h1></div><div class="header-actions"><button class="primary-button header-action-pill quick-add-btn" id="openQuickCaptureBtn" title="Thêm nhanh (phím N hoặc Ctrl+K)"><span style="font-size: 15px; margin-right: 2px;">+</span> Quick Add</button><button class="outline-button header-action-pill" id="openTakeNoteBtn">📸 Take Note</button><button class="outline-button header-action-pill" id="openMilestonesBtn">🎯 Kỳ thi</button><button class="round-button notification" id="notificationButton" aria-label="Thông báo"><svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><b></b></button><button class="profile-shortcut" id="profileShortcut"><span class="avatar small" id="headerInitial">M</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button></div></header>
+        <header class="topbar">
+          <div class="topbar-main">
+            <button class="mobile-menu" aria-label="Mở điều hướng"><span></span><span></span></button>
+            <div class="topbar-title">
+              <p class="eyebrow" id="headerDate"></p>
+              <h1 id="pageTitle"></h1>
+            </div>
+            <div class="topbar-user-actions">
+              <button class="round-button notification" id="notificationButton" aria-label="Thông báo"><svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg><b></b></button>
+              <button class="profile-shortcut" id="profileShortcut"><span class="avatar small" id="headerInitial">M</span><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></svg></button>
+            </div>
+          </div>
+          <div class="header-actions" id="headerActions">
+            <div class="header-actions-primary" id="headerActionsPrimary">
+              <button class="primary-button header-action-pill quick-add-btn" id="openQuickCaptureBtn" title="Thêm nhanh (phím N hoặc Ctrl+K)"><span style="font-size: 15px; margin-right: 2px;">+</span> Quick Add</button>
+              <button class="outline-button header-action-pill" id="openAskAIBtn" title="Trợ lý Thời gian AI">✦ Ask AI</button>
+            </div>
+            <div class="header-actions-secondary" id="headerActionsSecondary">
+              <button class="outline-button header-action-pill" id="openDailyReviewBtn" title="Tổng kết & Đánh giá ngày">📊 Daily Review</button>
+              <button class="outline-button header-action-pill" id="openTakeNoteBtn">📸 Take Note</button>
+              <button class="outline-button header-action-pill" id="openMilestonesBtn">🎯 Kỳ thi</button>
+            </div>
+          </div>
+        </header>
 
         <section id="home" class="page active-page">
           <!-- 1. TODAY HEADER -->
@@ -147,6 +170,115 @@
               </div>
             </section>
           </div>
+
+          <!-- P1.4: TODAY EXECUTION PULSE WIDGET -->
+          <div class="today-execution-widget" id="todayExecutionWidget">
+            <div class="tew-header">
+              <div class="tew-title-wrap">
+                <span class="pulse-dot active"></span>
+                <span class="kicker-tag">EXECUTION INTELLIGENCE</span>
+                <h3 class="tew-title">Nhịp học & Thực hiện hôm nay</h3>
+              </div>
+              <button type="button" class="text-button tew-link-btn" id="tewOpenReviewBtn">
+                📊 Xem lại ngày (Daily Review) →
+              </button>
+            </div>
+            <div class="tew-metrics-bar">
+              <div class="tew-metric-item">
+                <span class="tew-metric-num" id="tewCompletedCount">0/0</span>
+                <span class="tew-metric-lbl">Đã hoàn thành</span>
+              </div>
+              <div class="tew-metric-divider"></div>
+              <div class="tew-metric-item">
+                <span class="tew-metric-num" id="tewAdherencePct">100%</span>
+                <span class="tew-metric-lbl">Đúng giờ</span>
+              </div>
+              <div class="tew-metric-divider"></div>
+              <div class="tew-metric-item">
+                <span class="tew-metric-num" id="tewVarianceMin">0p</span>
+                <span class="tew-metric-lbl">Lệch thời lượng</span>
+              </div>
+            </div>
+            <div class="tew-body" id="tewBody">
+              <div class="tew-active-task-box" id="tewActiveTaskBox">
+                <div class="tew-active-info">
+                  <span class="tew-badge" id="tewActiveBadge">TIẾP THEO</span>
+                  <strong id="tewActiveTitle">Đang đồng bộ...</strong>
+                  <span class="tew-active-time" id="tewActiveTime">--:--</span>
+                </div>
+                <div class="tew-active-actions" id="tewActiveActions">
+                  <button type="button" class="primary-button small-btn" id="tewStartBtn">▶ Bắt đầu</button>
+                  <button type="button" class="outline-button small-btn" id="tewCompleteBtn">✓ Xong</button>
+                  <button type="button" class="text-button small-btn" id="tewPostponeBtn">⏩ Dời mai</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- P1.5 UNIFIED AI TIME ASSISTANT: ASK AI -->
+          <section class="ask-ai-widget card" id="askAIWidget">
+            <div class="ask-ai-header">
+              <div class="ask-ai-title-wrap">
+                <span class="ask-ai-sparkle">✦</span>
+                <h2 class="ask-ai-title">Trợ lý Thời gian AI (Ask AI)</h2>
+                <span class="ask-ai-badge">P1.5 UNIFIED</span>
+              </div>
+              <button type="button" class="text-button small-btn" id="askAIResetBtn" title="Bắt đầu hội thoại mới">
+                🔄 Đặt lại hội thoại
+              </button>
+            </div>
+            <p class="ask-ai-subtitle">Bạn muốn tôi giúp gì với lịch của bạn? Hỏi bất cứ điều gì về lịch trình, hạn chót, tìm giờ rảnh hay tối ưu ngày.</p>
+
+            <div class="ask-ai-stream" id="askAIStream">
+              <div class="ask-ai-bubble bot">
+                <div class="bubble-avatar">✦</div>
+                <div class="bubble-content">
+                  Chào bạn! Tôi là Trợ lý Thời gian AI. Bạn có thể yêu cầu tôi lên lịch ca học mới, tìm khung giờ rảnh, sửa lịch bị rối (Fix My Day), quản lý hạn chót hoặc tổng kết hiệu suất học tập.
+                </div>
+              </div>
+            </div>
+
+            <div class="ask-ai-chips" id="askAIChips">
+              <button type="button" class="ask-chip" data-chip="Lịch hôm nay rối quá, hãy sửa giúp tôi">🪄 Fix My Day</button>
+              <button type="button" class="ask-chip" data-chip="Tìm cho tôi 90 phút rảnh để học Lý">⏱ Tìm giờ rảnh</button>
+              <button type="button" class="ask-chip" data-chip="Sắp xếp cho tôi 2 tiếng học Toán ngày mai">📅 Lên lịch ngày mai</button>
+              <button type="button" class="ask-chip" data-chip="Tuần này tôi học thế nào?">📊 Review tuần này</button>
+              <button type="button" class="ask-chip" data-chip="Tại sao hôm nay tôi phải học nhiều thế?">💡 Giải thích lịch hôm nay</button>
+            </div>
+
+            <div class="ask-ai-input-bar">
+              <input
+                type="text"
+                class="ask-ai-input"
+                id="askAIInput"
+                placeholder="“Mai tôi muốn học Toán 2 tiếng...”, “Tìm giờ rảnh”, “Hạn chót thứ 6”"
+                autocomplete="off"
+              />
+              <button type="button" class="primary-button ask-ai-send-btn" id="askAISendBtn">
+                <span>Gửi</span> ↗
+              </button>
+            </div>
+
+            <div class="ask-ai-loading" id="askAILoading" hidden>
+              <div class="typing-indicator">
+                <span></span><span></span><span></span>
+              </div>
+              <span class="loading-text">Trợ lý AI đang phân tích và tìm phương án tối ưu...</span>
+            </div>
+
+            <!-- Action Preview & Proposal Card -->
+            <div class="ask-ai-proposal-card" id="askAIProposalCard" hidden>
+              <div class="aip-header">
+                <span class="aip-badge">✦ ĐỀ XUẤT THAY ĐỔI LỊCH</span>
+                <span class="aip-stale-warning" id="askAIStaleWarning" hidden>⚠️ Lịch trình vừa thay đổi. Hãy làm mới đề xuất!</span>
+              </div>
+              <div class="aip-body" id="askAIProposalBody"></div>
+              <div class="aip-actions">
+                <button type="button" class="primary-button small-btn" id="askAIApplyBtn">✓ Áp dụng thay đổi</button>
+                <button type="button" class="outline-button small-btn" id="askAIDismissBtn">Đóng</button>
+              </div>
+            </div>
+          </section>
 
           <!-- 4. ATTENTION CENTER -->
           <div class="today-attention-banner" id="todayAttentionBanner" hidden>
@@ -265,7 +397,7 @@
         <p class="eyebrow">TỰ ĐỘNG TÍCH HỢP TKB</p>
         <h2 id="importTitle">Nhập Thời khóa biểu<br><em>từ Ảnh hoặc File</em></h2>
         <div class="dropzone" id="timetableDropzone">
-          <input type="file" id="timetableFileInput" accept=".png,.jpg,.jpeg,.webp,.docx,.txt" hidden />
+          <input type="file" id="timetableFileInput" accept="image/png,image/jpeg,image/webp,.docx,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" aria-label="Tải lên tệp thời khóa biểu" />
           <span class="dropzone-icon">📥</span>
           <strong>Kéo thả hoặc chọn Ảnh / File Word TKB</strong>
           <p>Hỗ trợ PNG, JPG, WebP, Word (.docx) hoặc TXT định dạng chuẩn</p>
@@ -321,7 +453,7 @@
           </div>
           <label>Ảnh chụp bài vở / tài liệu hôm nay
             <div class="photo-uploader" id="notePhotoBox">
-              <input type="file" id="notePhotoInput" accept="image/*" hidden />
+              <input type="file" id="notePhotoInput" accept="image/png,image/jpeg,image/webp,image/*" aria-label="Tải lên ảnh bài học" />
               <div id="photoPlaceholder" class="photo-placeholder">
                 <span style="font-size: 24px;">📷</span>
                 <p>Nhấp để chụp ảnh hoặc tải ảnh bài vở hôm nay</p>
@@ -529,6 +661,304 @@
       </section>
     </div>
 
+    <!-- P1.3: FIX MY DAY MODAL (3-Step UX: Analyze -> Recommend -> Review) -->
+    <div class="modal-backdrop" id="fixMyDayModal">
+      <section class="modal-card fix-my-day-card" role="dialog" aria-modal="true" aria-labelledby="fixMyDayTitle">
+        <!-- Header -->
+        <div class="modal-head">
+          <div class="fmd-head-badges">
+            <span class="fmd-badge-engine">✦ FIX MY DAY ENGINE</span>
+            <span class="fmd-badge-score" id="fmdHealthBadge">Sức khỏe: 70/100</span>
+          </div>
+          <button type="button" class="icon-button" data-close-modal="fixMyDayModal" aria-label="Đóng modal">×</button>
+        </div>
+        <h2 id="fixMyDayTitle">🪄 Khắc phục sự cố lịch trình hôm nay</h2>
+        <p class="fmd-subtitle" id="fmdSubtitle">Phát hiện xung đột, quá tải và rủi ro hạn chót — xem đề xuất và duyệt thay đổi an toàn.</p>
+
+        <!-- Stale Warning Banner -->
+        <div class="fmd-stale-warning" id="fmdStaleWarning" hidden>
+          ⚠️ <strong>Lịch trình đã thay đổi:</strong> Dữ liệu đã được cập nhật ở nơi khác trong lúc bạn đang xem. Đề xuất này không còn khớp. Hãy làm mới lại phân tích!
+        </div>
+
+        <!-- 3-Step Navigation Tabs -->
+        <div class="fmd-steps-nav">
+          <button type="button" class="fmd-step-tab active" data-fmd-step="1">
+            <span class="fmd-step-num">1</span> Chẩn đoán sự cố
+          </button>
+          <button type="button" class="fmd-step-tab" data-fmd-step="2">
+            <span class="fmd-step-num">2</span> Đề xuất khắc phục (<span id="fmdChangesCount">0</span>)
+          </button>
+          <button type="button" class="fmd-step-tab" data-fmd-step="3">
+            <span class="fmd-step-num">3</span> So sánh Trước / Sau
+          </button>
+        </div>
+
+        <!-- Step 1: Chẩn đoán sự cố (Analysis) -->
+        <div class="fmd-step-pane active" id="fmdStep1">
+          <div class="fmd-analysis-grid">
+            <div class="fmd-metric-card" id="fmdMetricScore">
+              <span class="fmd-metric-icon">🩺</span>
+              <div class="fmd-metric-body">
+                <span class="fmd-metric-label">Điểm sức khỏe ngày</span>
+                <span class="fmd-metric-val" id="fmdScoreVal">—</span>
+              </div>
+            </div>
+            <div class="fmd-metric-card" id="fmdMetricCapacity">
+              <span class="fmd-metric-icon">⏳</span>
+              <div class="fmd-metric-body">
+                <span class="fmd-metric-label">Tải trọng thời gian</span>
+                <span class="fmd-metric-val" id="fmdCapacityVal">—</span>
+              </div>
+            </div>
+            <div class="fmd-metric-card" id="fmdMetricConflicts">
+              <span class="fmd-metric-icon">🔴</span>
+              <div class="fmd-metric-body">
+                <span class="fmd-metric-label">Xung đột lịch</span>
+                <span class="fmd-metric-val" id="fmdConflictsVal">—</span>
+              </div>
+            </div>
+            <div class="fmd-metric-card" id="fmdMetricDeadlines">
+              <span class="fmd-metric-icon">🎯</span>
+              <div class="fmd-metric-body">
+                <span class="fmd-metric-label">Rủi ro hạn chót</span>
+                <span class="fmd-metric-val" id="fmdDeadlinesVal">—</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="fmd-issues-section">
+            <h4 class="fmd-section-title">Chi tiết các vấn đề phát hiện:</h4>
+            <div class="fmd-issues-list" id="fmdIssuesList">
+              <!-- Dynamically populated issues -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2: Đề xuất khắc phục (Recommendations) -->
+        <div class="fmd-step-pane" id="fmdStep2" hidden>
+          <div class="fmd-rec-header">
+            <h4 class="fmd-section-title">Chọn các thay đổi bạn đồng ý áp dụng:</h4>
+            <div class="fmd-select-controls">
+              <button type="button" class="text-button" id="fmdSelectAllBtn">Chọn tất cả</button>
+              <span class="fmd-sep">•</span>
+              <button type="button" class="text-button" id="fmdDeselectAllBtn">Bỏ chọn tất cả</button>
+            </div>
+          </div>
+          <div class="fmd-changes-list" id="fmdChangesList">
+            <!-- Dynamically populated changes cards with checkboxes -->
+          </div>
+        </div>
+
+        <!-- Step 3: So sánh Trước / Sau (Visual Comparison) -->
+        <div class="fmd-step-pane" id="fmdStep3" hidden>
+          <div class="fmd-comparison-container">
+            <div class="fmd-col-schedule fmd-before">
+              <div class="fmd-col-head">
+                <span class="fmd-col-badge fmd-badge-before">Hiện tại (Trước)</span>
+                <span class="fmd-col-sub" id="fmdScoreBefore">Score: —</span>
+              </div>
+              <div class="fmd-timeline-mini" id="fmdTimelineBefore"></div>
+            </div>
+            <div class="fmd-col-divider">➔</div>
+            <div class="fmd-col-schedule fmd-after">
+              <div class="fmd-col-head">
+                <span class="fmd-col-badge fmd-badge-after">Đề xuất (Sau khi sửa)</span>
+                <span class="fmd-col-sub" id="fmdScoreAfter">Score: —</span>
+              </div>
+              <div class="fmd-timeline-mini" id="fmdTimelineAfter"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Modal Footer Actions -->
+        <div class="fmd-modal-footer">
+          <div class="fmd-footer-left">
+            <button type="button" class="outline-button" data-close-modal="fixMyDayModal">Hủy bỏ</button>
+          </div>
+          <div class="fmd-footer-right">
+            <button type="button" class="outline-button" id="fmdApplySelectedBtn">
+              Áp dụng các mục đã chọn (<span id="fmdSelectedCount">0</span>)
+            </button>
+            <button type="button" class="primary-button" id="fmdApplyAllBtn">
+              Áp dụng tất cả <span>✦</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- P1.4: DAILY REVIEW MODAL -->
+    <div class="modal-backdrop" id="dailyReviewModal">
+      <section class="modal-card daily-review-card" role="dialog" aria-modal="true" aria-labelledby="dailyReviewTitle">
+        <!-- Header -->
+        <div class="modal-head">
+          <div class="dr-head-badges">
+            <span class="dr-badge-engine">📊 EXECUTION INTELLIGENCE</span>
+            <span class="dr-badge-date" id="drDateBadge">Hôm nay</span>
+          </div>
+          <button type="button" class="icon-button" data-close-modal="dailyReviewModal" aria-label="Đóng modal">×</button>
+        </div>
+        <div class="dr-title-row">
+          <div>
+            <h2 id="dailyReviewTitle">Tổng kết & Đánh giá ngày (Daily Review)</h2>
+            <p class="dr-subtitle" id="drSubtitle">Phân tích chênh lệch Kế hoạch vs Thực tế, truy vết nguyên nhân và cải tiến ngày mai.</p>
+          </div>
+          <div class="dr-date-selector">
+            <input type="date" id="drDateInput" class="dr-date-picker" title="Chọn ngày để xem lại" />
+          </div>
+        </div>
+
+        <!-- 4 Key Performance Metrics -->
+        <div class="dr-metrics-grid">
+          <div class="dr-metric-box">
+            <span class="dr-metric-icon">🎯</span>
+            <div class="dr-metric-info">
+              <strong id="drTasksVal">0 / 0</strong>
+              <p>Nhiệm vụ hoàn thành</p>
+              <small id="drTasksPct">0% tỷ lệ hoàn thành</small>
+            </div>
+          </div>
+          <div class="dr-metric-box">
+            <span class="dr-metric-icon">⏱</span>
+            <div class="dr-metric-info">
+              <strong id="drTimeVal">0m / 0m</strong>
+              <p>Thời lượng học</p>
+              <small id="drTimeVariance">0m chênh lệch</small>
+            </div>
+          </div>
+          <div class="dr-metric-box">
+            <span class="dr-metric-icon">⏰</span>
+            <div class="dr-metric-info">
+              <strong id="drAdherenceVal">100%</strong>
+              <p>Chuẩn giờ hẹn (Adherence)</p>
+              <small id="drStartDelay">Đúng giờ</small>
+            </div>
+          </div>
+          <div class="dr-metric-box">
+            <span class="dr-metric-icon">🛡</span>
+            <div class="dr-metric-info">
+              <strong id="drDeadlineVal">100%</strong>
+              <p>Bảo vệ hạn chót</p>
+              <small id="drDeadlineSub">0 rủi ro hạn chót</small>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section: Why Did The Day Fail / Root Causes -->
+        <div class="dr-section">
+          <div class="dr-section-head">
+            <h3>Vì sao ngày chưa trọn vẹn? (Phân tích nguyên nhân)</h3>
+            <span class="dr-section-tip">Minh bạch giữa Dữ liệu thực tế và Suy luận hệ thống</span>
+          </div>
+          <div class="dr-causes-list" id="drRootCausesList">
+            <!-- Dynamically populated root causes with [DỮ LIỆU THỰC TẾ] and [SUY LUẬN HỆ THỐNG] badges -->
+          </div>
+        </div>
+
+        <!-- Section: Detected Personal Patterns -->
+        <div class="dr-section">
+          <div class="dr-section-head">
+            <h3>Quy luật học tập phát hiện</h3>
+            <span class="dr-section-tip">Dựa trên tối thiểu 3 ca học tương đồng (N ≥ 3)</span>
+          </div>
+          <div class="dr-patterns-list" id="drPatternsList">
+            <!-- Dynamically populated patterns with confidence score and evidence -->
+          </div>
+        </div>
+
+        <!-- Section: Actionable Recommendations -->
+        <div class="dr-section">
+          <div class="dr-section-head">
+            <h3>Đề xuất tinh chỉnh lịch trình (Adaptive Learning)</h3>
+            <span class="dr-section-tip">Bạn có toàn quyền chấp nhận hoặc từ chối đề xuất</span>
+          </div>
+          <div class="dr-recommendations-list" id="drRecommendationsList">
+            <!-- Dynamically populated recommendations with Apply / Decline buttons -->
+          </div>
+        </div>
+
+        <!-- Modal Footer Actions -->
+        <div class="dr-modal-footer">
+          <div class="dr-footer-left">
+            <button type="button" class="outline-button" id="drOpenWeeklyBtn">📅 Xem tổng kết 7 ngày (Weekly Review)</button>
+          </div>
+          <div class="dr-footer-right">
+            <button type="button" class="primary-button" data-close-modal="dailyReviewModal">Đóng</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- P1.4: WEEKLY REVIEW MODAL -->
+    <div class="modal-backdrop" id="weeklyReviewModal">
+      <section class="modal-card weekly-review-card" role="dialog" aria-modal="true" aria-labelledby="weeklyReviewTitle">
+        <div class="modal-head">
+          <div class="dr-head-badges">
+            <span class="dr-badge-engine">📈 WEEKLY INTELLIGENCE REVIEW</span>
+            <span class="dr-badge-date" id="wrDateBadge">7 ngày qua</span>
+          </div>
+          <button type="button" class="icon-button" data-close-modal="weeklyReviewModal" aria-label="Đóng modal">×</button>
+        </div>
+        <h2 id="weeklyReviewTitle">Nhìn lại 7 ngày học tập</h2>
+        <p class="dr-subtitle">Đánh giá tiến độ tổng thể, nhịp sinh học và các thói quen học tập nổi bật trong tuần qua.</p>
+
+        <div class="dr-metrics-grid">
+          <div class="dr-metric-box">
+            <span class="dr-metric-icon">📊</span>
+            <div class="dr-metric-info">
+              <strong id="wrCompletionRate">0%</strong>
+              <p>Tỷ lệ hoàn thành tuần</p>
+              <small id="wrTasksSummary">0 việc hoàn thành</small>
+            </div>
+          </div>
+          <div class="dr-metric-box">
+            <span class="dr-metric-icon">⌛</span>
+            <div class="dr-metric-info">
+              <strong id="wrStudyHours">0h</strong>
+              <p>Tổng giờ học thực tế</p>
+              <small id="wrPlannedHours">Kế hoạch: 0h</small>
+            </div>
+          </div>
+          <div class="dr-metric-box">
+            <span class="dr-metric-icon">🎯</span>
+            <div class="dr-metric-info">
+              <strong id="wrAdherenceRate">0%</strong>
+              <p>Độ chuẩn xác giờ hẹn</p>
+              <small id="wrAvgDelay">Trễ TB: 0p</small>
+            </div>
+          </div>
+          <div class="dr-metric-box">
+            <span class="dr-metric-icon">💡</span>
+            <div class="dr-metric-info">
+              <strong id="wrPatternsCount">0</strong>
+              <p>Quy luật phát hiện</p>
+              <small id="wrHighConfidence">Độ tin cậy cao</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="dr-section">
+          <div class="dr-section-head">
+            <h3>Các thói quen & quy luật nổi bật</h3>
+            <span class="dr-section-tip">Xu hướng lặp lại qua các ngày</span>
+          </div>
+          <div class="dr-patterns-list" id="wrPatternsList"></div>
+        </div>
+
+        <div class="dr-section">
+          <div class="dr-section-head">
+            <h3>Đề xuất tinh chỉnh lịch học tuần tới</h3>
+            <span class="dr-section-tip">Tối đa 3 đề xuất tối ưu nhất</span>
+          </div>
+          <div class="dr-recommendations-list" id="wrRecommendationsList"></div>
+        </div>
+
+        <div class="dr-modal-footer">
+          <button type="button" class="primary-button full-button" data-close-modal="weeklyReviewModal">Đóng</button>
+        </div>
+      </section>
+    </div>
+
     <!-- Mobile Floating Action Button -->
     <button class="fab-quick-add" id="fabQuickAdd" aria-label="Thêm nhanh (Quick Add)">
       <span>+</span>
@@ -558,7 +988,17 @@
     <script src="./src/ai/conflict-intelligence.js"></script>
     <script src="./src/ai/schedule-drift.js"></script>
     <script src="./src/ai/deadline-intelligence.js"></script>
+    <script src="./src/ai/capacity-engine.js"></script>
+    <script src="./src/execution/execution-tracker.js"></script>
+    <script src="./src/execution/pattern-detector.js"></script>
+    <script src="./src/execution/adaptive-learning.js"></script>
+    <script src="./src/ai/day-fix-engine.js"></script>
     <script src="./src/ai/reschedule-engine.js"></script>
+    <script src="./src/ai/intent-router.js"></script>
+    <script src="./src/ai/context-assembly.js"></script>
+    <script src="./src/ai/capability-router.js"></script>
+    <script src="./src/ai/assistant-conversation.js"></script>
+    <script src="./src/ai/time-assistant.js"></script>
     <script src="./src/ai/index.js"></script>
     <script src="./src/timetable/timetable-importer.js"></script>
     <script src="./app.js"></script>

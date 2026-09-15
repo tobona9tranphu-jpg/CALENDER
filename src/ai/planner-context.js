@@ -107,14 +107,26 @@
       reminders: context.userPreferences?.reminders !== false
     };
 
+    // 7. Learned Preferences (P1.4 Adaptive Learning)
+    const rawLearned = context.learnedPreferences || {};
+    const learnedPreferences = {
+      durationMultipliers: rawLearned.durationMultipliers ? Object.keys(rawLearned.durationMultipliers).sort().reduce((acc, k) => {
+        acc[k] = Number(rawLearned.durationMultipliers[k]);
+        return acc;
+      }, {}) : {},
+      enabled: rawLearned.enabled !== false,
+      eveningLoadAdjustment: Number(rawLearned.eveningLoadAdjustment || 0),
+      preferredBreakMinutes: Number(rawLearned.preferredBreakMinutes || 10),
+      preferredStartBuffer: Number(rawLearned.preferredStartBuffer || 0)
+    };
+
     return {
       availability,
       currentDate: String(context.currentDate || ''),
-      currentTime: String(context.currentTime || ''),
       deadlines,
       fixedEvents,
-      horizonDays: Number(context.horizonDays || 2),
       inboxItems,
+      learnedPreferences,
       scheduledTasks,
       timezone: 'Asia/Ho_Chi_Minh',
       userPreferences
@@ -261,11 +273,16 @@
       const sanitizedTask = {
         id: t.id,
         title: t.title,
-        minutes: Number(t.minutes || 30),
+        minutes: Number(t.minutes || t.durationMinutes || 30),
+        durationMinutes: Number(t.durationMinutes || t.minutes || 30),
         priority: Number(t.priority || 3),
         subjectId: t.subjectId || null,
         scheduledDate: t.scheduledDate || null,
-        deadline: t.deadline || null
+        startTime: t.startTime || null,
+        endTime: t.endTime || null,
+        deadline: t.deadline || null,
+        status: t.status || 'open',
+        locked: Boolean(t.locked)
       };
 
       if (isInbox) {
@@ -313,6 +330,7 @@
       deadlines,
       completedWork,
       userPreferences,
+      learnedPreferences: user?.settings?.learnedPreferences || {},
       calendarRevision: computeCalendarRevision(user),
       horizonDays: horizon
     };

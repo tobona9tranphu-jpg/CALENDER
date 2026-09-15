@@ -1,15 +1,33 @@
-﻿'use strict';
+'use strict';
 
 /**
  * @file conflict-intelligence.js
- * Deterministic Conflict Intelligence Engine.
+ * Deterministic Conflict Intelligence Engine (Product Phase P1.3).
  *
  * Classifies scheduling conflicts into:
- * - HARD CONFLICTS (fixed event overlap, availability bounds violation, deadline impossibility, internal overlap, invalid intervals)
- * - SOFT CONFLICTS (insufficient break, task fragmentation, overloaded day, suboptimal timing)
+ * - HARD CONFLICTS:
+ *   - Overlapping time between tasks or events (e.g. 08:00–09:30 Math and 08:30–10:00 Physics)
+ *   - Overlap with immutable fixed events or school timetable
+ *   - Boundary violation with availability / quiet hours
+ *   - Invalid intervals (endTime <= startTime)
  *
- * Outputs structured conflict descriptors with clear, explainable Vietnamese messages.
- * Severity levels: 'critical', 'high', 'medium', 'low'.
+ * - SOFT CONFLICTS:
+ *   - Insufficient break buffer between consecutive tasks (< minBreak)
+ *   - Excessive consecutive tasks causing fatigue
+ *   - Task fragmentation (< minBlock)
+ *   - Overloaded day exceeding maximum recommended workload
+ *   - Capacity overflow
+ *
+ * Contract per requirement:
+ * {
+ *   type: "hard" | "soft",
+ *   category: string,
+ *   severity: "critical" | "high" | "medium" | "low",
+ *   eventIds: string[],
+ *   taskIds: string[],
+ *   reason: string,
+ *   suggestedAction: string
+ * }
  */
 
 (function (root, factory) {
@@ -44,7 +62,7 @@
    * @param {number} [options.minBreakMinutes=10]
    * @param {number} [options.minBlockMinutes=45]
    * @param {number} [options.maxDailyWorkMinutes=300]
-   * @returns {{ hardConflicts: Array, softConflicts: Array, allConflicts: Array, hasHardConflicts: boolean }}
+   * @returns {{ hardConflicts: Array, softConflicts: Array, allConflicts: Array, hasHardConflicts: boolean, totalCount: number }}
    */
   function detectConflicts(proposalOrActions, context = {}, options = {}) {
     const minBreak = options.minBreakMinutes !== undefined ? options.minBreakMinutes : 10;
@@ -92,14 +110,20 @@
           const bEnd = minFromTime(b.end);
 
           if (aStart < bEnd && aEnd > bStart) {
+            const evIds = [a.id, b.id].filter(Boolean);
             hardConflicts.push({
-              type: 'RIGID_EVENTS_OVERLAP',
+              type: 'hard',
+              category: 'RIGID_EVENTS_OVERLAP',
+              code: 'RIGID_EVENTS_OVERLAP',
               severity: 'critical',
               date,
-              affectedActionIds: [a.id, b.id].filter(Boolean),
+              eventIds: evIds,
+              taskIds: [],
+              affectedActionIds: evIds,
               affectedTaskIds: [],
               message: `Hai sự kiện cố định trùng lịch: "${a.title}" (${a.start}–${a.end}) và "${b.title}" (${b.start}–${b.end}) vào ngày ${date}`,
               reason: 'Lịch học/sự kiện cố định không thể diễn ra cùng một lúc.',
+              suggestedAction: 'Kiểm tra lại thời khóa biểu cố định để điều chỉnh khung giờ.',
               suggestedResolution: 'Kiểm tra lại thời khóa biểu cố định để điều chỉnh khung giờ.'
             });
           }
@@ -130,13 +154,18 @@
           const eMin = minFromTime(endStr);
           if (eMin <= sMin) {
             hardConflicts.push({
-              type: 'INVALID_INTERVAL',
+              type: 'hard',
+              category: 'INVALID_INTERVAL',
+              code: 'INVALID_INTERVAL',
               severity: 'critical',
               date,
+              eventIds: [],
+              taskIds: [taskId].filter(Boolean),
               affectedActionIds: [actionId],
               affectedTaskIds: [taskId].filter(Boolean),
               message: `Khung giờ không hợp lệ cho "${title}": kết thúc ${endStr} trước hoặc bằng giờ bắt đầu ${startStr}`,
               reason: 'Thời gian kết thúc phải diễn ra sau thời gian bắt đầu.',
+              suggestedAction: `Chỉnh sửa giờ kết thúc thành sau ${startStr}.`,
               suggestedResolution: `Chỉnh sửa giờ kết thúc thành sau ${startStr}.`
             });
             continue;
@@ -145,13 +174,18 @@
           // Check: Availability Violation
           if (sMin < availStartMin || eMin > availEndMin) {
             hardConflicts.push({
-              type: 'AVAILABILITY_VIOLATION',
+              type: 'hard',
+              category: 'AVAILABILITY_VIOLATION',
+              code: 'AVAILABILITY_VIOLATION',
               severity: 'high',
               date,
+              eventIds: [],
+              taskIds: [taskId].filter(Boolean),
               affectedActionIds: [actionId],
               affectedTaskIds: [taskId].filter(Boolean),
               message: `"${title}" (${startStr}–${endStr}) nằm ngoài khung giờ khả dụng (${avail.start}–${avail.end})`,
-              reason: 'Lịch học không nên xếp vào thời gian người dùng không sẵn sàng hoặc đang ngủ.',
+              reason: 'Lịch học không nên xếp vào thời gian người dùng không sẵn sàng hoặc đang ngủ/nghỉ ngơi.',
+              suggestedAction: `Dời nhiệm vụ vào trong khoảng từ ${avail.start} đến ${avail.end}.`,
               suggestedResolution: `Dời nhiệm vụ vào trong khoảng từ ${avail.start} đến ${avail.end}.`
             });
           }
@@ -162,13 +196,18 @@
             const feEnd = minFromTime(fe.end);
             if (sMin < feEnd && eMin > feStart) {
               hardConflicts.push({
-                type: 'FIXED_EVENT_OVERLAP',
+                type: 'hard',
+                category: 'FIXED_EVENT_OVERLAP',
+                code: 'FIXED_EVENT_OVERLAP',
                 severity: 'critical',
                 date,
+                eventIds: [fe.id].filter(Boolean),
+                taskIds: [taskId].filter(Boolean),
                 affectedActionIds: [actionId],
                 affectedTaskIds: [taskId].filter(Boolean),
                 message: `"${title}" (${startStr}–${endStr}) trùng với sự kiện cố định "${fe.title}" (${fe.start}–${fe.end})`,
-                reason: 'Sự kiện cố định là bất khả biến và không thể di dời.',
+                reason: 'Sự kiện cố định và thời khóa biểu trường học là bất khả biến và không thể di dời.',
+                suggestedAction: `Dời "${title}" sang trước ${fe.start} hoặc sau ${fe.end}.`,
                 suggestedResolution: `Dời "${title}" sang trước ${fe.start} hoặc sau ${fe.end}.`
               });
             }
@@ -183,14 +222,20 @@
               const osMin = minFromTime(otherStartStr);
               const oeMin = minFromTime(otherEndStr);
               if (sMin < oeMin && eMin > osMin) {
+                const tIds = [taskId, other.taskId || other.id].filter(Boolean);
                 hardConflicts.push({
-                  type: 'INTERNAL_OVERLAP',
+                  type: 'hard',
+                  category: 'INTERNAL_OVERLAP',
+                  code: 'INTERNAL_OVERLAP',
                   severity: 'high',
                   date,
+                  eventIds: [],
+                  taskIds: tIds,
                   affectedActionIds: [actionId, other.id].filter(Boolean),
-                  affectedTaskIds: [taskId, other.taskId || other.id].filter(Boolean),
+                  affectedTaskIds: tIds,
                   message: `Xung đột trùng giờ giữa "${title}" (${startStr}–${endStr}) và "${other.title || 'Nhiệm vụ khác'}" (${otherStartStr}–${otherEndStr})`,
                   reason: 'Không thể học hai nhiệm vụ cùng một lúc.',
+                  suggestedAction: `Xếp lại một trong hai nhiệm vụ vào khung giờ trống kế tiếp.`,
                   suggestedResolution: `Xếp lại một trong hai nhiệm vụ vào khung giờ trống kế tiếp.`
                 });
               }
@@ -201,13 +246,18 @@
         // Soft Conflict: Task Fragmentation
         if (duration > 0 && duration < minBlock && item.type !== 'create_event') {
           softConflicts.push({
-            type: 'TASK_FRAGMENTATION',
+            type: 'soft',
+            category: 'TASK_FRAGMENTATION',
+            code: 'TASK_FRAGMENTATION',
             severity: 'low',
             date,
+            eventIds: [],
+            taskIds: [taskId].filter(Boolean),
             affectedActionIds: [actionId],
             affectedTaskIds: [taskId].filter(Boolean),
             message: `"${title}" bị chia nhỏ (${duration} phút) dưới mức khuyến nghị ${minBlock} phút`,
             reason: 'Các phiên học quá ngắn làm giảm sự tập trung sâu.',
+            suggestedAction: `Gộp phiên học thành khối liên tục từ ${minBlock} phút trở lên.`,
             suggestedResolution: `Gộp phiên học thành khối liên tục từ ${minBlock} phút trở lên.`
           });
         }
@@ -226,14 +276,20 @@
         const gap = nextStart - curEnd;
 
         if (gap >= 0 && gap < minBreak) {
+          const tIds = [cur.taskId || cur.id, next.taskId || next.id].filter(Boolean);
           softConflicts.push({
-            type: 'INSUFFICIENT_BREAK',
+            type: 'soft',
+            category: 'INSUFFICIENT_BREAK',
+            code: 'INSUFFICIENT_BREAK',
             severity: 'medium',
             date,
+            eventIds: [],
+            taskIds: tIds,
             affectedActionIds: [cur.id, next.id].filter(Boolean),
-            affectedTaskIds: [cur.taskId || cur.id, next.taskId || next.id].filter(Boolean),
+            affectedTaskIds: tIds,
             message: `Thiếu thời gian nghỉ (${gap} phút) giữa "${cur.title}" và "${next.title}"`,
             reason: `Cần ít nhất ${minBreak} phút nghỉ ngơi để phục hồi năng lượng giữa các phiên.`,
+            suggestedAction: `Cách giờ bắt đầu của "${next.title}" thêm ${minBreak - gap} phút.`,
             suggestedResolution: `Cách giờ bắt đầu của "${next.title}" thêm ${minBreak - gap} phút.`
           });
         }
@@ -242,14 +298,20 @@
       // Soft Conflict: Overloaded Day
       if (totalDailyMinutes > maxDayWork) {
         const hours = Math.round(totalDailyMinutes / 60 * 10) / 10;
+        const allTIds = dayItems.map(it => it.taskId || it.id).filter(Boolean);
         softConflicts.push({
-          type: 'OVERLOADED_DAY',
-          severity: 'medium',
+          type: 'soft',
+          category: 'OVERLOADED_DAY',
+          code: 'OVERLOADED_DAY',
+          severity: 'high',
           date,
+          eventIds: [],
+          taskIds: allTIds,
           affectedActionIds: dayItems.map(it => it.id).filter(Boolean),
-          affectedTaskIds: dayItems.map(it => it.taskId || it.id).filter(Boolean),
+          affectedTaskIds: allTIds,
           message: `Khối lượng học tập ngày ${date} quá dày (${hours} giờ / tối đa ${Math.round(maxDayWork / 60)}h)`,
           reason: 'Học quá nhiều trong một ngày dễ gây mệt mỏi và giảm hiệu suất.',
+          suggestedAction: 'Chuyển bớt các nhiệm vụ ít ưu tiên sang ngày tiếp theo.',
           suggestedResolution: 'Chuyển bớt các nhiệm vụ ít ưu tiên sang ngày tiếp theo.'
         });
       }

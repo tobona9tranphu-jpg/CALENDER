@@ -118,11 +118,13 @@
 
     if (!rule) {
       // Legacy fixed schedule compatibility: weekday (0-6)
-      if (typeof event.day === 'number' && event.day >= 0 && event.day <= 6) {
+      const numDay = (event.day !== undefined && event.day !== null && event.day !== '') ? Number(event.day) : NaN;
+      const normalizedDay = numDay === 7 ? 0 : numDay;
+      if (!isNaN(normalizedDay) && Number.isInteger(normalizedDay) && normalizedDay >= 0 && normalizedDay <= 6) {
         rule = {
           frequency: RecurrenceFrequency.WEEKLY,
           interval: 1,
-          daysOfWeek: [event.day]
+          daysOfWeek: [normalizedDay]
         };
         eventStart = eventStart || rangeStart;
       } else {
