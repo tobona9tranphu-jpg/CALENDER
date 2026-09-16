@@ -110,6 +110,27 @@
       } else {
         classifiedIntent = aiIntent;
       }
+
+      // Post-processor: validate extracted subject against user's actual subjects
+      if (classifiedIntent && classifiedIntent.entities && classifiedIntent.entities.subject) {
+        const extractedSubject = classifiedIntent.entities.subject;
+        const userSubjects = currentUser.subjects || [];
+        const exactMatch = userSubjects.find(s => s.name.toLowerCase() === extractedSubject.toLowerCase());
+        if (!exactMatch) {
+          // Try partial/fuzzy match
+          const partialMatch = userSubjects.find(s => 
+            s.name.toLowerCase().includes(extractedSubject.toLowerCase()) ||
+            extractedSubject.toLowerCase().includes(s.name.toLowerCase())
+          );
+          if (partialMatch) {
+            classifiedIntent.entities.subject = partialMatch.name;
+            classifiedIntent.entities.subjectId = partialMatch.id;
+          }
+          // If no match at all, keep the original (could be a new subject name)
+        } else {
+          classifiedIntent.entities.subjectId = exactMatch.id;
+        }
+      }
     }
 
     // 3. Ambiguity Check: Do we need clarification before acting?

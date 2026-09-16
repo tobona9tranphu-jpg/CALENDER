@@ -179,34 +179,193 @@
   }
 
   /**
+   * Extracts MULTIPLE date references from Vietnamese text.
+   * e.g., "thứ 2, 4, 6" → ['2026-09-22', '2026-09-24', '2026-09-26']
+   * Returns array of ISO date strings.
+   */
+  function parseDateReferences(text, baseDate) {
+    const today = baseDate || getToday();
+    const lower = (text || '').toLowerCase();
+    const dates = [];
+    const seen = new Set();
+
+    // Check for comma-separated weekday numbers: "2, 4, 6" or "thứ 2, 4, 6" or "T2, T4, T6"
+    const weekdayListMatch = lower.match(/(?:thứ\s*)?(\d(?:\s*,\s*\d)+)/g);
+    if (weekdayListMatch) {
+      for (const match of weekdayListMatch) {
+        const nums = match.replace(/thứ\s*/g, '').split(/\s*,\s*/).map(Number);
+        for (const n of nums) {
+          if (n >= 2 && n <= 7) {
+            // Vietnamese weekday: thứ 2 = Monday (JS day 1)
+            const jsDow = n >= 2 && n <= 7 ? n - 1 : 0; // thứ 2→1(Mon), thứ 7→6(Sat)
+            const currDow = new Date(today + 'T00:00:00').getDay();
+            let diff = jsDow - currDow;
+            if (diff <= 0) diff += 7;
+            const dateStr = addDays(today, diff);
+            if (!seen.has(dateStr)) {
+              seen.add(dateStr);
+              dates.push(dateStr);
+            }
+          }
+        }
+      }
+    }
+
+    // Also check for T2/T4/T6 style
+    const tStyleMatch = lower.match(/t([2-7])(?:\s*[,/]\s*t([2-7]))+/gi);
+    if (tStyleMatch && dates.length === 0) {
+      for (const match of tStyleMatch) {
+        const nums = match.match(/\d/g).map(Number);
+        for (const n of nums) {
+          if (n >= 2 && n <= 7) {
+            const jsDow = n - 1;
+            const currDow = new Date(today + 'T00:00:00').getDay();
+            let diff = jsDow - currDow;
+            if (diff <= 0) diff += 7;
+            const dateStr = addDays(today, diff);
+            if (!seen.has(dateStr)) {
+              seen.add(dateStr);
+              dates.push(dateStr);
+            }
+          }
+        }
+      }
+    }
+
+    // If no multi-date found, fall back to single date
+    if (dates.length === 0) {
+      const single = parseDateReference(text, baseDate);
+      if (single) dates.push(single);
+    }
+
+    return dates;
+  }
+
+  /**
+   * Extracts a target time from Vietnamese text.
+   * e.g., "17h" → "17:00", "5pm" → "17:00", "7 giờ tối" → "19:00", "lúc 15:00" → "15:00"
+   */
+  function parseTimeReference(text) {
+    const lower = (text || '').toLowerCase();
+
+    // Explicit HH:MM: "15:00", "lúc 17:30"
+    const explicitMatch = lower.match(/(\d{1,2}):(\d{2})/);
+    if (explicitMatch) {
+      const h = parseInt(explicitMatch[1], 10);
+      const m = parseInt(explicitMatch[2], 10);
+      if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+        return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+      }
+    }
+
+    // "17h", "17h30", "7h30"
+    const hMatch = lower.match(/(\d{1,2})\s*h\s*(\d{1,2})?/);
+    if (hMatch) {
+      let h = parseInt(hMatch[1], 10);
+      const m = hMatch[2] ? parseInt(hMatch[2], 10) : 0;
+      // Adjust for context: if "tối" is in text and h < 12, add 12
+      if (h < 12 && (lower.includes('tối') || lower.includes('đêm'))) h += 12;
+      if (h < 12 && lower.includes('chiều') && h !== 12) h += 12;
+      if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+        return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+      }
+    }
+
+    // "5pm", "5 pm", "5am"
+    const ampmMatch = lower.match(/(\d{1,2})\s*(am|pm)/);
+    if (ampmMatch) {
+      let h = parseInt(ampmMatch[1], 10);
+      if (ampmMatch[2] === 'pm' && h < 12) h += 12;
+      if (ampmMatch[2] === 'am' && h === 12) h = 0;
+      return String(h).padStart(2, '0') + ':00';
+    }
+
+    // "7 giờ tối" / "3 giờ chiều" / "9 giờ sáng"
+    const gioMatch = lower.match(/(\d{1,2})\s*giờ/);
+    if (gioMatch) {
+      let h = parseInt(gioMatch[1], 10);
+      if (h < 12 && (lower.includes('tối') || lower.includes('đêm'))) h += 12;
+      if (h < 12 && lower.includes('chiều') && h !== 12) h += 12;
+      if (h >= 0 && h <= 23) {
+        return String(h).padStart(2, '0') + ':00';
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Extracts known subjects or general topic title.
    */
   function extractSubject(text, knownSubjects = []) {
-    const lower = (text || '').toLowerCase();
-    const commonSubjects = [
-      { name: 'Toán', keywords: ['toán', 'đại số', 'hình học', 'giải tích'] },
-      { name: 'Vật lí', keywords: ['vật lí', 'vật lý', 'lý', 'lí'] },
-      { name: 'Hóa học', keywords: ['hóa học', 'hóa'] },
-      { name: 'Sinh học', keywords: ['sinh học', 'sinh'] },
-      { name: 'Ngữ văn', keywords: ['ngữ văn', 'văn', 'nghị luận'] },
-      { name: 'Tiếng Anh', keywords: ['tiếng anh', 'anh văn', 'tiếng anh 12', 'ielts'] },
-      { name: 'Lịch sử', keywords: ['lịch sử', 'sử'] },
-      { name: 'Địa lí', keywords: ['địa lí', 'địa lý', 'địa'] },
-      { name: 'Tin học', keywords: ['tin học', 'tin', 'lập trình'] }
-    ];
+    const lower = (text || '').toLowerCase().trim();
+    if (!lower) return null;
 
-    // Check user's actual registered subjects first
+    // Priority 1: Exact match on user's registered subjects
     for (const sub of (knownSubjects || [])) {
       const subName = (sub.name || '').toLowerCase();
       if (subName && lower.includes(subName)) return sub.name;
-    }
-
-    for (const sub of commonSubjects) {
-      for (const kw of sub.keywords) {
-        const regex = new RegExp(`(?:\\b|\\s)${kw}(?:\\b|\\s|[.,!?]|$)`, 'i');
-        if (regex.test(lower)) return sub.name;
+      // Also check aliases if the user defined any
+      if (Array.isArray(sub.aliases)) {
+        for (const alias of sub.aliases) {
+          if (alias && lower.includes(alias.toLowerCase())) return sub.name;
+        }
       }
     }
+
+    // Priority 2: Exact subject name matches (longest first to avoid substring issues)
+    const exactMatches = [
+      { name: 'Tiếng Anh', patterns: ['tiếng anh', 'anh văn', 'ielts'] },
+      { name: 'Ngữ văn',   patterns: ['ngữ văn'] },
+      { name: 'Vật lí',    patterns: ['vật lí', 'vật lý'] },
+      { name: 'Hóa học',   patterns: ['hóa học'] },
+      { name: 'Sinh học',  patterns: ['sinh học'] },
+      { name: 'Lịch sử',  patterns: ['lịch sử'] },
+      { name: 'Địa lí',   patterns: ['địa lí', 'địa lý'] },
+      { name: 'Tin học',   patterns: ['tin học'] },
+      { name: 'Toán',      patterns: ['toán', 'đại số', 'hình học', 'giải tích'] },
+    ];
+    for (const entry of exactMatches) {
+      for (const pat of entry.patterns) {
+        if (lower.includes(pat)) return entry.name;
+      }
+    }
+
+    // Priority 3: Standalone short keywords (single Vietnamese syllables)
+    // These are ambiguous so we only match them when they appear as standalone words
+    const shortKeywords = [
+      { name: 'Hóa học', keywords: ['hóa'] },
+      { name: 'Ngữ văn', keywords: ['văn'] },
+      { name: 'Lịch sử', keywords: ['sử'] },
+      { name: 'Địa lí',  keywords: ['địa'] },
+      { name: 'Sinh học', keywords: ['sinh'] },
+      { name: 'Tin học',  keywords: ['tin'] },
+      { name: 'Vật lí',  keywords: ['lý', 'lí'] },
+    ];
+
+    // Compounds that contain "lý"/"lí" but do NOT refer to physics
+    const lyCompounds = ['lý thuyết', 'tâm lý', 'lý do', 'lý luận', 'quản lý', 'xử lý', 'lí thuyết', 'tâm lí', 'lí do', 'lí luận'];
+
+    // Standalone check: keyword must be surrounded by spaces, start/end, or punctuation
+    for (const entry of shortKeywords) {
+      for (const kw of entry.keywords) {
+        // Guard: skip 'lý'/'lí' if it appears as part of a compound word
+        if ((kw === 'lý' || kw === 'lí') && lyCompounds.some(c => lower.includes(c))) {
+          continue;
+        }
+        const standaloneRegex = new RegExp('(?:^|[\\s,;.!?])' + kw + '(?:$|[\\s,;.!?])', 'i');
+        // Also match if keyword is at very start or end with no other chars
+        if (standaloneRegex.test(' ' + lower + ' ')) {
+          return entry.name;
+        }
+      }
+    }
+
+    // Priority 4: Special compound patterns
+    if (lower.includes('nghị luận')) return 'Ngữ văn';
+    if (lower.includes('lập trình')) return 'Tin học';
+    if (lower.includes('tiếng anh 12')) return 'Tiếng Anh';
+
     return null;
   }
 
@@ -239,6 +398,8 @@
     const dateRef = parseDateReference(raw, baseDate);
     const subject = extractSubject(raw, knownSubjects);
     const timePref = extractTimePreference(raw);
+    const targetTime = parseTimeReference(raw);
+    const multiDates = parseDateReferences(raw, baseDate);
 
     // 1. Fix My Day
     if (
@@ -322,7 +483,8 @@
           subject,
           durationMinutes: duration || 60,
           date: dateRef || baseDate,
-          timePreference: timePref
+          timePreference: timePref,
+          targetTime: targetTime || null
         },
         constraints: [],
         source: 'deterministic',
@@ -340,7 +502,7 @@
       lower.includes('sắp nộp') ||
       lower.includes('trước ngày') ||
       lower.includes('trước thứ') ||
-      lower.includes('hạn')
+      (lower.includes('hạn') && (lower.includes('nộp') || lower.includes('bài') || lower.includes('ngày')))
     ) {
       return {
         intent: 'deadline_help',
@@ -349,7 +511,8 @@
           subject,
           taskTitle: subject ? `Nộp bài tập ${subject}` : 'Nộp bài tập',
           deadlineDate: dateRef || addDays(baseDate, 2),
-          durationMinutes: duration || 90
+          durationMinutes: duration || 90,
+          targetTime: targetTime || null
         },
         constraints: [],
         source: 'deterministic',
@@ -397,7 +560,8 @@
         entities: {
           subject,
           date: dateRef || baseDate,
-          timePreference: timePref
+          timePreference: timePref,
+          targetTime: targetTime || null
         },
         constraints: [],
         source: 'deterministic',
@@ -430,15 +594,22 @@
     }
 
     // 9. Plan (Default for study request)
+    const planDates = multiDates.length > 0 ? multiDates : (dateRef ? [dateRef] : [baseDate]);
     return {
       intent: 'plan',
-      confidence: (subject || duration || dateRef) ? 0.85 : 0.60,
+      confidence: (subject || duration || dateRef || targetTime) ? 0.85 : 0.60,
       entities: {
         subject: subject || (raw.length < 30 ? raw : 'Học tập'),
         taskTitle: subject ? `Học ${subject}` : raw,
-        durationMinutes: duration || null, // Might be ambiguous
-        date: dateRef || baseDate,
-        timePreference: timePref
+        durationMinutes: duration || null,
+        date: planDates[0],
+        dates: planDates.length > 1 ? planDates : undefined,
+        targetTime: targetTime || null,
+        timePreference: timePref,
+        recurrence: multiDates.length > 1 ? {
+          type: 'weekly',
+          days: multiDates.map(d => new Date(d + 'T00:00:00').getDay())
+        } : undefined
       },
       constraints: [],
       source: 'deterministic',
@@ -494,6 +665,8 @@
     detectAmbiguity,
     _parseDurationMinutes: parseDurationMinutes,
     _parseDateReference: parseDateReference,
+    _parseDateReferences: parseDateReferences,
+    _parseTimeReference: parseTimeReference,
     _extractSubject: extractSubject
   };
 }));

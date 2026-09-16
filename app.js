@@ -201,8 +201,6 @@ if (typeof window !== 'undefined') window.TODAY = TODAY;
 let scheduleViewDate = TODAY;
 let calendarMonth = Number(TODAY.split('-')[1]) - 1;
 let calendarYear = Number(TODAY.split('-')[0]);
-const DEMO_EMAIL = 'minhanh@tb.demo';
-const DEMO_PASSWORD = 'demo123';
 const dayNames = (DateUtil && DateUtil.DAY_NAMES_VI) || ['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy'];
 
 function parseTimetableDayToAppDay(input) {
@@ -353,11 +351,11 @@ function relDate(offset) {
   return DateUtil ? DateUtil.addAppDays(TODAY, offset) : TODAY;
 }
 
-function seedAccount() {
+function seedAccount(options = {}) {
   return {
-    id: 'demo-minh-anh',
-    email: DEMO_EMAIL,
-    password: DEMO_PASSWORD,
+    id: options.id || ('user-' + Date.now()),
+    email: options.email || '',
+    password: options.password || '',
     onboarded: true,
     profile: { name: 'Minh Anh', grade: 'Lớp 12A1', goal: 'Tăng sự tự tin trước kỳ thi cuối kỳ', timezone: 'Asia/Ho_Chi_Minh' },
     availability: { start: '15:00', end: '21:30', days: [1, 2, 3, 4, 5, 6, 0] },
@@ -4363,7 +4361,7 @@ async function signIn(email, password) {
       const accounts = getLocalAccounts();
       const account = accounts.find(item => item.email.toLowerCase() === normEmail && item.password === password);
       if (!account) {
-        $('#loginError').textContent = 'Email hoặc mật khẩu chưa đúng. Bạn có thể dùng tài khoản mẫu bên dưới.';
+        $('#loginError').textContent = 'Email hoặc mật khẩu chưa đúng.';
         $('#loginError').hidden = false;
         return;
       }
@@ -4499,7 +4497,7 @@ async function createProfile(event) {
   }
 }
 function exportData() { const blob = new Blob([JSON.stringify(currentUser, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `TB-${currentUser.profile.name.toLowerCase().replace(/\s+/g, '-')}.json`; link.click(); URL.revokeObjectURL(url); toast('Đã xuất bản sao lưu dữ liệu.'); }
-function resetDemo() { if (!window.confirm('Khôi phục dữ liệu mẫu? Các thay đổi của tài khoản hiện tại sẽ bị thay thế.')) return; const replacement = seedAccount(); replacement.id = currentUser.id; replacement.email = currentUser.email; currentUser = replacement; persist(); renderApp(); toast('Đã khôi phục dữ liệu mẫu cho tài khoản này.'); }
+// resetDemo removed — no longer needed after demo account cleanup
 function updateNotificationBadge() {
   const notifBtn = $('#notificationButton');
   if (!notifBtn) return;
@@ -4648,7 +4646,7 @@ function toggleNotification() {
 })();
 
 $('#loginForm')?.addEventListener('submit', event => { event.preventDefault(); signIn($('#loginEmail')?.value, $('#loginPassword')?.value); });
-$('#fillDemo')?.addEventListener('click', () => { if ($('#loginEmail')) $('#loginEmail').value = DEMO_EMAIL; if ($('#loginPassword')) $('#loginPassword').value = DEMO_PASSWORD; if ($('#loginError')) $('#loginError').hidden = true; });
+// fillDemo listener removed — demo account button deleted
 $('#createDemoProfile')?.addEventListener('click', () => openModal('loginProfileModal'));
 $('#createProfileForm')?.addEventListener('submit', createProfile);
 $('#onboardingNext')?.addEventListener('click', advanceOnboarding);
@@ -4663,7 +4661,7 @@ $('#fixedForm')?.addEventListener('submit', saveFixed); $('#availabilityForm')?.
 $('#fixedDays')?.addEventListener('click', event => { const button = event.target.closest('button[data-day]'); if (!button) return; button.classList.toggle('chosen'); showConflictHint(); });
 $('#discardConflict')?.addEventListener('click', discardConflict); $('#editConflict')?.addEventListener('click', editConflict); $('#applyAlternative')?.addEventListener('click', applyAlternative);
 $('#alternativeList')?.addEventListener('change', () => { $$('.alternative-card', $('#alternativeList')).forEach(card => card.classList.toggle('selected', $('input', card).checked)); });
-$('#fixedScheduleButton')?.addEventListener('click', openFixedModal); $('#fixedScheduleButtonSecondary')?.addEventListener('click', openFixedModal); $('#availabilityButton')?.addEventListener('click', openAvailability); $('#addSubjectButton')?.addEventListener('click', () => openSubjectModal()); $('#addTaskButton')?.addEventListener('click', () => openTaskModal()); $('#logSessionButton')?.addEventListener('click', openQuickLog); $('#refreshInsights')?.addEventListener('click', () => { renderInsights(); toast('Đã cập nhật insight từ dữ liệu hiện có.'); }); $('#exportData')?.addEventListener('click', exportData); $('#resetDemo')?.addEventListener('click', resetDemo); $('#notificationButton')?.addEventListener('click', toggleNotification);
+$('#fixedScheduleButton')?.addEventListener('click', openFixedModal); $('#fixedScheduleButtonSecondary')?.addEventListener('click', openFixedModal); $('#availabilityButton')?.addEventListener('click', openAvailability); $('#addSubjectButton')?.addEventListener('click', () => openSubjectModal()); $('#addTaskButton')?.addEventListener('click', () => openTaskModal()); $('#logSessionButton')?.addEventListener('click', openQuickLog); $('#refreshInsights')?.addEventListener('click', () => { renderInsights(); toast('Đã cập nhật insight từ dữ liệu hiện có.'); }); $('#exportData')?.addEventListener('click', exportData); $('#notificationButton')?.addEventListener('click', toggleNotification);
 $('#accountButton')?.addEventListener('click', () => openModal('accountModal')); $('#profileShortcut')?.addEventListener('click', () => openModal('accountModal')); $('#logoutButton')?.addEventListener('click', logout); $('#openProfileFromAccount')?.addEventListener('click', () => { closeModal('accountModal'); openProfile(); });
 
 /* New feature event listeners */
@@ -5038,7 +5036,16 @@ document.addEventListener('click', event => {
   }
 
   if (event.target.closest('#aiAskBtn')) {
-    handleAiAskSubmit();
+    const inputEl = $('#aiAskInput');
+    const text = (inputEl ? inputEl.value : '').trim();
+    if (text) {
+      const mainInput = $('#askAIInput');
+      if (mainInput) mainInput.value = text;
+      const askWidget = $('#askAIWidget');
+      if (askWidget) askWidget.scrollIntoView({ behavior: 'smooth' });
+      submitAskAI(text);
+      if (inputEl) inputEl.value = '';
+    }
   }
 
   if (event.target.closest('#fixMyDayBtn')) {
