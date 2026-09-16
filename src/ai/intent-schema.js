@@ -57,7 +57,9 @@
         date: t.date || null,
         priority: t.priority || 3,
         flexible: t.flexible !== false,
-        subjectId: t.subjectId || null
+        subjectId: t.subjectId || null,
+        dates: Array.isArray(t.dates) ? t.dates : undefined,
+        recurrence: (t.recurrence && typeof t.recurrence === 'object') ? t.recurrence : undefined
       })),
       fixedEvents: (fixedEvents || []).map((f, index) => ({
         id: f.id || ('intent-fixed-' + (index + 1)),

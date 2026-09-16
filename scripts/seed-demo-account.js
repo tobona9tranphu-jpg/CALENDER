@@ -9,13 +9,19 @@ function relDate(offset) {
 }
 
 async function main() {
-  const email = 'minhanh@tb.demo';
+  const email = process.argv[2];
+  const password = process.argv[3];
+  if (!email || !password) {
+    console.error('Usage: node seed-demo-account.js <email> <password>');
+    process.exitCode = 1;
+    return;
+  }
   if (await findUserByEmail(email)) {
     console.log(`Seed skipped: ${email} already exists.`);
     return;
   }
   const user = await createUser({
-    id: 'demo-minh-anh', email, passwordHash: await bcrypt.hash('demo123', 12), onboarded: true,
+    id: 'user-' + Date.now(), email, passwordHash: await bcrypt.hash(password, 12), onboarded: true,
     profile: { name: 'Minh Anh', grade: 'Lớp 12A1', goal: 'Tăng sự tự tin trước kỳ thi cuối kỳ', timezone: 'Asia/Ho_Chi_Minh' },
     availability: { start: '15:00', end: '21:30', days: [1, 2, 3, 4, 5, 6, 0] },
     settings: { reminders: true, coach: true },

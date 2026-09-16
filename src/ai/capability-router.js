@@ -616,44 +616,67 @@
         const dur = Number(entities.durationMinutes || 60);
         const sub = entities.subject || 'Học tập';
         const title = entities.taskTitle || `Học ${sub}`;
+        
+        const datesToPlan = Array.isArray(entities.dates) && entities.dates.length > 0 
+          ? entities.dates 
+          : [targetDate];
 
-        // Find available slot
-        const slotResult = findAvailableSlots({
-          durationMinutes: dur,
-          date: targetDate,
-          timePreference: entities.timePreference,
-          subject: sub
-        }, context);
+        const actions = [];
+        const rationales = [];
+        let missingDates = [];
 
-        if (slotResult.slots.length > 0) {
-          const bestSlot = slotResult.slots[0];
-          const action = {
-            id: 'action-plan-' + Date.now(),
-            type: 'schedule_task',
-            title,
-            date: targetDate,
-            startTime: bestSlot.start,
-            endTime: bestSlot.end,
+        for (const planDate of datesToPlan) {
+          const slotResult = findAvailableSlots({
             durationMinutes: dur,
-            rationale: `Xếp lịch học ${sub} vào khung giờ rảnh tối ưu ${bestSlot.start}–${bestSlot.end} ngày ${targetDate}.`
-          };
+            date: planDate,
+            timePreference: entities.timePreference,
+            subject: sub
+          }, context);
 
+          if (slotResult.slots.length > 0) {
+            const bestSlot = slotResult.slots[0];
+            const startTime = entities.targetTime || bestSlot.start;
+            const endTime = entities.targetTime ? timeFromMin(minFromTime(entities.targetTime) + dur) : bestSlot.end;
+            
+            actions.push({
+              id: 'action-plan-' + planDate + '-' + Date.now(),
+              type: 'schedule_task',
+              title,
+              date: planDate,
+              startTime: startTime,
+              endTime: endTime,
+              durationMinutes: dur,
+              rationale: `Xếp lịch học ${sub} vào khung giờ ${startTime}–${endTime} ngày ${planDate}.`
+            });
+            rationales.push(`Ngày ${planDate}: **${startTime} – ${endTime}**`);
+          } else {
+            missingDates.push(planDate);
+          }
+        }
+
+        if (actions.length > 0) {
           const proposal = (PlanningProposal && PlanningProposal.createPlanningProposal)
             ? PlanningProposal.createPlanningProposal({
-                actions: [action],
-                rationale: [action.rationale],
+                actions: actions,
+                rationale: rationales,
                 source: 'deterministic'
               })
-            : { actions: [action], rationale: [action.rationale] };
+            : { actions: actions, rationale: rationales };
+
+          let msg = `Tôi đề xuất xếp ca **"${title}"** (${dur} phút) vào ${actions.length} ngày:\n\n${rationales.map(r => '- ' + r).join('\\n')}`;
+          if (missingDates.length > 0) {
+            msg += `\\n\\n(Không tìm thấy khung giờ rảnh cho các ngày: ${missingDates.join(', ')})`;
+          }
+          msg += '\\n\\nBạn có muốn áp dụng lịch này không?';
 
           return {
             status: 'proposal_ready',
-            message: `Tôi đề xuất xếp ca **"${title}"** (${dur} phút) vào ngày **${targetDate}**:\n\nKhung giờ: **${bestSlot.start} – ${bestSlot.end}** (Độ phù hợp: ${bestSlot.suitabilityScore}/100, không có xung đột).\n\nBạn có muốn áp dụng lịch này không?`,
+            message: msg,
             intent: 'plan',
-            data: { slot: bestSlot },
+            data: { scheduledDates: datesToPlan.filter(d => !missingDates.includes(d)), missingDates },
             proposal,
             requiresConfirmation: true,
-            warnings: [],
+            warnings: missingDates.length > 0 ? ['Không đủ thời gian rảnh cho một số ngày'] : [],
             actions: [
               { id: 'apply_plan', label: '✓ Áp dụng lên lịch', type: 'apply_proposal', payload: proposal }
             ]
@@ -661,9 +684,9 @@
         } else {
           return {
             status: 'information',
-            message: `Không tìm thấy khung giờ rảnh liên tục ${dur} phút cho môn ${sub} vào ngày ${targetDate}. Bạn có muốn chạy Fix My Day để sắp xếp lại không?`,
+            message: `Không tìm thấy khung giờ rảnh liên tục ${dur} phút cho môn ${sub} vào các ngày đã chọn. Bạn có muốn chạy Fix My Day để sắp xếp lại không?`,
             intent: 'plan',
-            data: slotResult,
+            data: { requestedDates: datesToPlan },
             proposal: null,
             requiresConfirmation: false,
             warnings: ['Không đủ thời gian rảnh'],
