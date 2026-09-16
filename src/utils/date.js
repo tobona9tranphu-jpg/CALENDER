@@ -529,6 +529,7 @@
     parseAppDate,
     addAppDays,
     diffAppCalendarDays,
+    diffAppDays: diffAppCalendarDays,
     isSameAppDay,
     getAppDayOfWeek,
     startOfAppDay,

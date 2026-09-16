@@ -950,6 +950,178 @@ textarea,
   .week-header {
     min-width: 540px !important;
   }
+
+  /* ── 10b. MOBILE ONBOARDING MODAL & STEPS ────────────────────────────── */
+  .onboarding-modal {
+    width: 100% !important;
+    max-width: min(460px, calc(100vw - 20px)) !important;
+    max-height: min(92dvh, calc(100vh - 20px)) !important;
+    max-height: calc(100dvh - 20px - env(safe-area-inset-bottom, 0px)) !important;
+    padding: 24px 20px 22px !important;
+    padding-top: max(22px, env(safe-area-inset-top, 22px)) !important;
+    padding-bottom: max(22px, env(safe-area-inset-bottom, 22px)) !important;
+    border-radius: 18px !important;
+    box-sizing: border-box !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+
+  .onboarding-brand {
+    font-size: 20px !important;
+  }
+
+  .onboarding-dots {
+    display: flex !important;
+    gap: 6px !important;
+    margin: 14px 0 20px !important;
+  }
+  .onboarding-dots i {
+    width: 18px !important;
+    height: 3.5px !important;
+    border-radius: 4px !important;
+  }
+  .onboarding-dots i.active {
+    width: 26px !important;
+  }
+
+  .onboarding-step {
+    display: none !important;
+    height: auto !important;
+    min-height: 0 !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  .onboarding-step.active {
+    display: block !important;
+  }
+
+  .onboarding-step h2 {
+    font-size: clamp(24px, 6.5vw, 30px) !important;
+    line-height: 1.15 !important;
+    letter-spacing: -0.5px !important;
+    margin: 6px 0 10px !important;
+  }
+  .onboarding-step > p:not(.eyebrow) {
+    font-size: 13.5px !important;
+    line-height: 1.55 !important;
+    color: #68655e !important;
+  }
+
+  .onboarding-field {
+    display: grid !important;
+    gap: 8px !important;
+    margin-top: 18px !important;
+    font-size: 13px !important;
+    font-weight: 600 !important;
+    color: #55524b !important;
+  }
+  .onboarding-field input {
+    width: 100% !important;
+    box-sizing: border-box !important;
+    padding: 12px 14px !important;
+    border: 1.5px solid #dedcd6 !important;
+    border-radius: 10px !important;
+    background: #fff !important;
+    font-size: 16px !important; /* >= 16px prevents iOS auto-zoom */
+    color: #242420 !important;
+    outline-color: #6b60cc !important;
+  }
+
+  .combo-presets-label {
+    font-size: 10.5px !important;
+    margin-top: 14px !important;
+    margin-bottom: 6px !important;
+  }
+  .combo-presets {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+    margin-bottom: 10px !important;
+  }
+  .combo-btn {
+    min-height: 48px !important;
+    padding: 8px 6px !important;
+    border-radius: 10px !important;
+    box-sizing: border-box !important;
+  }
+  .combo-btn b {
+    font-size: 14px !important;
+  }
+  .combo-btn span {
+    font-size: 11px !important;
+    white-space: normal !important;
+    line-height: 1.3 !important;
+    word-break: break-word !important;
+    text-align: center !important;
+  }
+
+  .onboarding-step[data-onboarding-step="2"] .subject-choice-grid {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+    max-height: 220px !important;
+    overflow-y: auto !important;
+    margin-top: 8px !important;
+  }
+  .onboarding-step[data-onboarding-step="2"] .subject-choice-grid button {
+    min-height: 44px !important;
+    height: auto !important;
+    padding: 8px 10px !important;
+    font-size: 13px !important;
+    box-sizing: border-box !important;
+    white-space: normal !important;
+    word-break: break-word !important;
+  }
+  .onboarding-step[data-onboarding-step="2"] .subject-choice-grid .subject-orb {
+    width: 26px !important;
+    height: 26px !important;
+    font-size: 12px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .onboarding-modal .form-two-col {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+    margin-top: 14px !important;
+  }
+  .onboarding-modal .form-two-col label {
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    color: #55524b !important;
+  }
+  .onboarding-modal .form-two-col input {
+    font-size: 16px !important;
+    padding: 10px 12px !important;
+    border-radius: 8px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+  .onboarding-modal .day-picker {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+    margin-top: 14px !important;
+  }
+  .onboarding-modal .day-picker button {
+    min-width: 38px !important;
+    min-height: 38px !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    border-radius: 8px !important;
+  }
+
+  .onboarding-next {
+    min-height: 48px !important;
+    font-size: 15px !important;
+    font-weight: 700 !important;
+    margin-top: 18px !important;
+    width: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
 }
 
 /* ── 5. EXTRA COMPACT PHONES (<= 360px) ─────────────────────────────────── */
@@ -963,5 +1135,16 @@ textarea,
   }
   #todayGreeting {
     font-size: 22px !important;
+  }
+  .onboarding-modal {
+    padding: 20px 14px 18px !important;
+  }
+  .combo-btn span {
+    font-size: 10px !important;
+  }
+  .onboarding-modal .day-picker button {
+    min-width: 34px !important;
+    min-height: 34px !important;
+    font-size: 11px !important;
   }
 }

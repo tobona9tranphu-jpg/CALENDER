@@ -627,12 +627,12 @@ function derivedInsights() {
   const allTopics = currentUser.subjects.flatMap(subject => subject.topics.map(topic => ({ ...topic, subject })));
   const weakest = allTopics.sort((a, b) => a.mastery - b.mastery)[0];
   if (weakest && weakest.mastery < 70) insights.push({ title: `Bạn đang cần thêm thời gian cho ${weakest.name}.`, body: `Mức nắm vững hiện tại là ${weakest.mastery}%, thấp nhất trong các chủ đề bạn đang theo dõi.`, source: `Dựa trên Knowledge Map · ${weakest.subject.name}`, action: 'Xem chủ đề', page: 'subjects' });
-  const fortyFive = currentUser.sessions.filter(session => session.minutes === 45);
+  const fortyFive = (currentUser.sessions || []).filter(session => session.minutes === 45);
   const fortyFiveComplete = fortyFive.filter(session => session.status === 'complete').length;
   if (fortyFive.length >= 3) insights.push({ title: `Bạn hoàn thành tốt các phiên 45 phút.`, body: `${Math.round((fortyFiveComplete / fortyFive.length) * 100)}% trong ${fortyFive.length} phiên 45 phút đã được hoàn thành.`, source: `Dựa trên ${fortyFive.length} phiên học đã ghi nhận`, action: 'Ghi phiên 45p', page: 'progress' });
-  const missed = currentUser.sessions.filter(session => session.status === 'missed').length;
+  const missed = (currentUser.sessions || []).filter(session => session.status === 'missed').length;
   if (missed) insights.push({ title: `Bạn đã bỏ lỡ ${missed} phiên học.`, body: `TB đang ưu tiên lại các nhiệm vụ mở trong khung giờ rảnh tiếp theo của bạn.`, source: `Dựa trên lịch sử Study Sessions`, action: 'Xem lịch', page: 'schedule' });
-  const review = currentUser.reviewSchedules.filter(item => item.status === 'scheduled').sort((a, b) => a.due.localeCompare(b.due))[0];
+  const review = (currentUser.reviewSchedules || []).filter(item => item.status === 'scheduled').sort((a, b) => a.due.localeCompare(b.due))[0];
   if (review) { const topic = getTopic(review.topicId); if (topic) insights.push({ title: dateFrom(review.due) <= dateFrom(TODAY) ? `Nên ôn lại ${topic.name} hôm nay.` : `${topic.name} cần được ôn vào ${formatShortDate(review.due)}.`, body: `Lần ôn này được tạo theo khoảng cách ${review.interval} ngày từ phiên học trước.`, source: `Dựa trên Review Schedule · ${topic.subject.name}`, action: 'Bắt đầu ôn', page: 'home', review }); }
   if (!insights.length) insights.push({ title: 'Hãy ghi phiên học đầu tiên.', body: 'Khi có dữ liệu về thời lượng, mức độ hiểu hoặc quiz, TB sẽ chỉ hiển thị insight có căn cứ.', source: 'Chưa đủ dữ liệu để suy luận', action: 'Ghi nhanh', page: 'progress' });
   return insights.slice(0, 4);
@@ -838,8 +838,8 @@ function renderToday() {
   }
 
   (currentUser.examMilestones || []).forEach(m => {
-    const days = DateUtil ? DateUtil.diffAppDays(m.date, TODAY) : 99;
-    if (days >= 0 && days <= 7) {
+    const days = typeof calculateDaysUntil === 'function' ? calculateDaysUntil(m.date) : (DateUtil && (DateUtil.diffAppCalendarDays || DateUtil.diffAppDays) ? (DateUtil.diffAppCalendarDays || DateUtil.diffAppDays)(m.date, TODAY) : 99);
+    if (days !== null && days >= 0 && days <= 7) {
       attentionItems.push(`<span>🎯 Kỳ thi sắp tới: <strong>${escapeHTML(m.title)}</strong> (${days === 0 ? 'HÔM NAY' : days + ' ngày nữa'})</span>`);
     }
   });
@@ -1076,7 +1076,7 @@ function renderSubjects() {
   $('#subjectLibrary').innerHTML = currentUser.subjects.length ? currentUser.subjects.map(subject => { const style = appearance(subject); const average = subjectAverage(subject); return `<article class="subject-editor-card"><div class="subject-editor-summary"><span class="subject-orb ${style.orb}">${style.icon}</span><p class="eyebrow">${average}% NẮM VỮNG</p><h3>${escapeHTML(subject.name)}</h3><p>${escapeHTML(subject.target || 'Chưa đặt mục tiêu môn học')}</p></div><div class="subject-editor-content"><header><p>${subject.topics.length ? 'Chỉnh sửa từng chủ đề để TB biết phần nào cần được ưu tiên.' : 'Thêm chủ đề đầu tiên để bắt đầu theo dõi.'}</p><button class="mini-action" data-edit-subject="${subject.id}">Chỉnh sửa môn</button></header>${subject.topics.map(topic => { const [status, statusClass] = masteryStatus(topic.mastery); return `<div class="topic-editor-row"><b>${escapeHTML(topic.name)}</b><strong>${topic.mastery}%</strong><small class="${statusClass}">● ${status}</small><button class="task-arrow" data-edit-topic="${topic.id}" data-subject-id="${subject.id}" aria-label="Chỉnh sửa ${escapeHTML(topic.name)}">→</button></div>`; }).join('')}<button class="mini-action" data-add-topic="${subject.id}">+ Thêm chủ đề</button></div></article>`; }).join('') : '<div class="empty-library">Bạn chưa có môn học. Hãy thêm môn đầu tiên để TB có cơ sở xây lịch.</div>';
 }
 function renderProgress() {
-  const completed = currentUser.sessions.filter(session => session.status === 'complete'); const minutes = completed.reduce((sum, session) => sum + Number(session.minutes), 0);
+  const completed = (currentUser.sessions || []).filter(session => session.status === 'complete'); const minutes = completed.reduce((sum, session) => sum + Number(session.minutes), 0);
   $('#studyMinutes').textContent = formatMinutes(minutes); $('#studyTrend').textContent = completed.length ? `Dựa trên ${completed.length} phiên hoàn thành đã lưu` : 'Chưa có phiên hoàn thành';
   const todayWeekday = DateUtil ? DateUtil.getAppDayOfWeek(TODAY) : new Date().getDay();
   const weekdayMinutes = [1, 2, 3, 4, 5, 6, 0].map(day => {
@@ -1086,9 +1086,9 @@ function renderProgress() {
   });
   const max = Math.max(...weekdayMinutes, 60);
   $('#barChart').innerHTML = weekdayMinutes.map((value, index) => `<i style="height:${Math.max(8, Math.round((value / max) * 100))}%" title="${value} phút"></i>`).join('');
-  const review = currentUser.reviewSchedules.filter(item => item.status === 'scheduled').sort((a, b) => a.due.localeCompare(b.due))[0]; const topic = review ? getTopic(review.topicId) : null;
+  const review = (currentUser.reviewSchedules || []).filter(item => item.status === 'scheduled').sort((a, b) => a.due.localeCompare(b.due))[0]; const topic = review ? getTopic(review.topicId) : null;
   if (topic) { $('#reviewTopic').textContent = topic.name; $('#retentionValues').innerHTML = `<span>Trước học<b>${topic.quiz?.before ?? '—'}/10</b></span><i></i><span>Sau học<b>${topic.quiz?.after ?? '—'}/10</b></span><i></i><span>Sau ${review.interval} ngày<b>${topic.quiz?.retention ?? '—'}/10</b></span>`; $('#reviewNote').innerHTML = dateFrom(review.due) <= dateFrom(TODAY) ? `Đến lịch ôn lại hôm nay. TB đặt lần ôn này sau <strong>${review.interval} ngày</strong> vì đó là khoảng cách đã lưu từ phiên trước.` : `Lần ôn kế tiếp: <strong>${formatShortDate(review.due)}</strong>. Khoảng cách hiện tại là ${review.interval} ngày.`; $('#reviewNote').insertAdjacentHTML('beforeend', ` <button class="soft-button" data-complete-review="${review.id}">Đánh dấu đã ôn xong</button>`); } else { $('#reviewTopic').textContent = 'Chưa có lịch ôn'; $('#retentionValues').innerHTML = '<span>Hãy hoàn thành một phiên học để TB tạo lịch ôn.</span>'; $('#reviewNote').textContent = 'Spaced repetition sẽ thay đổi khoảng cách theo mức độ hiểu bạn ghi nhận.'; }
-  $('#sessionLog').innerHTML = currentUser.sessions.length ? [...currentUser.sessions].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6).map(session => { const topic = getTopic(session.topicId); return `<article class="session-log-row"><time>${formatShortDate(session.date)}</time><div><h3>${escapeHTML(topic?.name || 'Chủ đề đã xoá')}</h3><p>${escapeHTML(topic?.subject.name || 'Không rõ môn')} · ${session.status === 'complete' ? `Hiểu ${session.understanding || 0}/5` : 'Đã bỏ lỡ'}</p></div><strong>${session.status === 'complete' ? `${session.minutes}p` : 'Bỏ lỡ'}</strong></article>`; }).join('') : emptyHTML('Chưa có lịch sử. Hãy ghi nhanh một phiên học.');
+  $('#sessionLog').innerHTML = (currentUser.sessions || []).length ? [...currentUser.sessions].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6).map(session => { const topic = getTopic(session.topicId); return `<article class="session-log-row"><time>${formatShortDate(session.date)}</time><div><h3>${escapeHTML(topic?.name || 'Chủ đề đã xoá')}</h3><p>${escapeHTML(topic?.subject.name || 'Không rõ môn')} · ${session.status === 'complete' ? `Hiểu ${session.understanding || 0}/5` : 'Đã bỏ lỡ'}</p></div><strong>${session.status === 'complete' ? `${session.minutes}p` : 'Bỏ lỡ'}</strong></article>`; }).join('') : emptyHTML('Chưa có lịch sử. Hãy ghi nhanh một phiên học.');
 }
 function renderTasks() {
   const source = taskFilter === 'all' ? currentUser.tasks : currentUser.tasks.filter(task => taskFilter === 'done' ? task.status === 'done' : task.status !== 'done');
@@ -4421,6 +4421,8 @@ function resetOnboarding() {
   $('#onboardingNext').innerHTML = 'Tiếp tục <span>→</span>';
   syncOnboardingCombosUI();
   $$('#onboardingDays button').forEach(button => button.classList.toggle('chosen', onboardingChosenDays.has(Number(button.dataset.day))));
+  const modalEl = document.querySelector('.onboarding-modal');
+  if (modalEl) modalEl.scrollTop = 0;
 }
 
 function advanceOnboarding() {
@@ -4433,6 +4435,8 @@ function advanceOnboarding() {
     $$('.onboarding-step').forEach(step => step.classList.toggle('active', Number(step.dataset.onboardingStep) === onboardingStep));
     $$('.onboarding-dots i').forEach((dot, index) => dot.classList.toggle('active', index < onboardingStep));
     $('#onboardingNext').innerHTML = onboardingStep === 4 ? 'Tạo kế hoạch đầu tiên <span>✦</span>' : 'Tiếp tục <span>→</span>';
+    const modalEl = document.querySelector('.onboarding-modal');
+    if (modalEl) modalEl.scrollTop = 0;
     return;
   }
   currentUser.profile.grade = $('#onboardingGrade').value.trim();
