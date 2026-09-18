@@ -48,11 +48,10 @@ describe('Deterministic Central Clock (src/utils/clock.js)', () => {
       expect(Clock.getCurrentAppTime()).toBe('16:45');
     });
 
-    test('fixes time using date string YYYY-MM-DD with default time 08:00', () => {
-      Clock.setFixed('2026-11-20');
-      expect(Clock.isFixed()).toBe(true);
-      expect(Clock.today()).toBe('2026-11-20');
-      expect(Clock.getCurrentAppTime()).toBe('08:00');
+    test('throws error when bare date string YYYY-MM-DD passed without time', () => {
+      expect(() => {
+        Clock.setFixed('2026-11-20');
+      }).toThrow(/Clock\.setFixed requires explicit time string/i);
     });
 
     test('restores live clock', () => {
@@ -88,19 +87,19 @@ describe('Deterministic Central Clock (src/utils/clock.js)', () => {
       expect(AppDate.getCurrentAppTime(ctx.currentInstant)).toBe('16:00');
     });
 
-    test('derives deterministic baseline time when ONLY currentDate provided (no wall-clock leakage)', () => {
-      // Set fixed clock to some other date/time in the past
-      Clock.setFixed('2024-01-01', '23:59');
+    test('derives currentTime from Clock.getCurrentAppTime() when ONLY currentDate provided (no magic 08:00)', () => {
+      // Set fixed clock with explicit time
+      Clock.setFixed('2026-09-15', '14:30');
 
       const ctx = Clock.getPlanningContext({
         currentDate: '2026-09-15'
       });
 
       expect(ctx.currentDate).toBe('2026-09-15');
-      // Should derive a deterministic morning time (08:00), NEVER leaking 23:59 or real system time
-      expect(ctx.currentTime).toBe('08:00');
+      // Should derive time from Clock.getCurrentAppTime() (14:30), not arbitrary 08:00
+      expect(ctx.currentTime).toBe('14:30');
       expect(AppDate.getTodayAppDate(ctx.currentInstant)).toBe('2026-09-15');
-      expect(AppDate.getCurrentAppTime(ctx.currentInstant)).toBe('08:00');
+      expect(AppDate.getCurrentAppTime(ctx.currentInstant)).toBe('14:30');
     });
 
     test('uses Clock instant when no options provided', () => {

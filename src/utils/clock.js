@@ -99,10 +99,12 @@
 
     if (typeof instantOrDate === 'string') {
       const trimmed = instantOrDate.trim();
-      // Bare date YYYY-MM-DD
+      // Bare date YYYY-MM-DD without time is prohibited to prevent magic defaults
       if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-        const t = optionalTime || '08:00';
-        _fixedInstant = new Date(`${trimmed}T${t}:00+07:00`);
+        if (!optionalTime) {
+          throw new Error('Clock.setFixed requires explicit time string (HH:mm) or full ISO string when passing bare date (YYYY-MM-DD)');
+        }
+        _fixedInstant = new Date(`${trimmed}T${optionalTime}:00+07:00`);
         return;
       }
       // ISO or other parsable string
@@ -168,14 +170,9 @@
       };
     }
 
-    // Case 3: Only currentDate provided -> Prevent half-injected clock bug!
+    // Case 3: Only currentDate provided -> derive time directly from Clock.getCurrentAppTime() (rooted in Clock.now())
     if (options.currentDate && !options.currentTime) {
-      // If Clock is fixed to this same date, use Clock's time.
-      // Otherwise, use a deterministic morning baseline ('08:00') for the day.
-      const currentClockDate = today();
-      const derivedTime = (currentClockDate === options.currentDate)
-        ? getCurrentAppTime()
-        : '08:00';
+      const derivedTime = getCurrentAppTime();
       const inst = new Date(`${options.currentDate}T${derivedTime}:00+07:00`);
       return {
         currentInstant: inst,

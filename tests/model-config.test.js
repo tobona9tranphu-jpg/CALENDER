@@ -3,18 +3,31 @@
 const AIConfig = require('../src/config/ai');
 
 describe('AI Configuration & Model Synchronization (src/config/ai.js)', () => {
-  test('exports DEFAULT_GEMINI_MODEL as gemini-2.0-flash', () => {
-    expect(AIConfig.DEFAULT_GEMINI_MODEL).toBe('gemini-2.0-flash');
+  test('exports DEFAULT_GEMINI_MODEL as gemini-3.5-flash', () => {
+    expect(AIConfig.DEFAULT_GEMINI_MODEL).toBe('gemini-3.5-flash');
   });
 
-  test('ALLOWED_GEMINI_MODELS includes supported production models', () => {
-    expect(AIConfig.ALLOWED_GEMINI_MODELS).toContain('gemini-2.0-flash');
-    expect(AIConfig.ALLOWED_GEMINI_MODELS).toContain('gemini-1.5-flash');
+  test('ALLOWED_GEMINI_MODELS includes supported production models and excludes shutdown models', () => {
+    expect(AIConfig.ALLOWED_GEMINI_MODELS).toContain('gemini-3.5-flash');
+    expect(AIConfig.ALLOWED_GEMINI_MODELS).toContain('gemini-3.5-flash-lite');
+    expect(AIConfig.ALLOWED_GEMINI_MODELS).not.toContain('gemini-2.0-flash');
+    expect(AIConfig.ALLOWED_GEMINI_MODELS).not.toContain('gemini-1.5-flash');
   });
 
-  test('validateGeminiModel correctly validates well-formed model names', () => {
-    expect(AIConfig.validateGeminiModel('gemini-2.0-flash').valid).toBe(true);
-    expect(AIConfig.validateGeminiModel('gemini-1.5-pro').valid).toBe(true);
+  test('validateGeminiModel correctly validates well-formed model names and rejects shutdown models', () => {
+    expect(AIConfig.validateGeminiModel('gemini-3.5-flash').valid).toBe(true);
+    expect(AIConfig.validateGeminiModel('gemini-3.5-flash-lite').valid).toBe(true);
+
+    // Shutdown models must be rejected with AI_MODEL_NOT_FOUND
+    const shutdownRes = AIConfig.validateGeminiModel('gemini-2.0-flash');
+    expect(shutdownRes.valid).toBe(false);
+    expect(shutdownRes.code).toBe(AIConfig.AI_ERROR_TYPES.MODEL_NOT_FOUND);
+    expect(shutdownRes.error).toMatch(/shut down/i);
+
+    const shutdownRes15 = AIConfig.validateGeminiModel('gemini-1.5-pro');
+    expect(shutdownRes15.valid).toBe(false);
+    expect(shutdownRes15.code).toBe(AIConfig.AI_ERROR_TYPES.MODEL_NOT_FOUND);
+
     expect(AIConfig.validateGeminiModel('gpt-4o').valid).toBe(false);
     expect(AIConfig.validateGeminiModel('').valid).toBe(false);
     expect(AIConfig.validateGeminiModel(null).valid).toBe(false);
@@ -24,10 +37,10 @@ describe('AI Configuration & Model Synchronization (src/config/ai.js)', () => {
     const originalEnv = process.env.GEMINI_MODEL;
     delete process.env.GEMINI_MODEL;
 
-    expect(AIConfig.resolveGeminiModel()).toBe('gemini-2.0-flash');
+    expect(AIConfig.resolveGeminiModel()).toBe('gemini-3.5-flash');
 
-    process.env.GEMINI_MODEL = 'gemini-1.5-flash';
-    expect(AIConfig.resolveGeminiModel()).toBe('gemini-1.5-flash');
+    process.env.GEMINI_MODEL = 'gemini-3.5-flash-lite';
+    expect(AIConfig.resolveGeminiModel()).toBe('gemini-3.5-flash-lite');
 
     if (originalEnv) {
       process.env.GEMINI_MODEL = originalEnv;

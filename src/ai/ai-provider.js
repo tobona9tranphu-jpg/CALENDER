@@ -350,7 +350,7 @@
     constructor({ apiKey = undefined, model = undefined, timeoutMs = undefined } = {}) {
       super();
       this.apiKey = (apiKey !== undefined) ? apiKey : (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : null);
-      this.model = model || (AIConfig ? AIConfig.resolveGeminiModel() : 'gemini-2.0-flash');
+      this.model = model || (AIConfig ? AIConfig.resolveGeminiModel() : 'gemini-3.5-flash');
       this.timeoutMs = timeoutMs || (AIConfig ? AIConfig.AI_TIMEOUT_MS : 14000);
     }
 
