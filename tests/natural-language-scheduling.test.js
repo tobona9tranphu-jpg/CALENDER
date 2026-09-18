@@ -85,6 +85,44 @@ describe('Natural Language Scheduling', () => {
       expect(result.intent).toBe('plan');
       expect(result.entities.targetTime).toBe('17:00');
     });
+
+    test('"2,4,6 tôi học Toán lúc 17h" regression (Section 26)', () => {
+      const result = IntentRouter.classifyDeterministic('2,4,6 tôi học Toán lúc 17h', {
+        currentDate: '2026-09-16',
+        subjects: [{ id: 'math', name: 'Toán' }]
+      });
+      expect(result.intent).toBe('plan');
+      expect(result.entities.subject).toBe('Toán');
+      expect(result.entities.dates.length).toBe(3);
+      expect(result.entities.targetTime).toBe('17:00');
+      // Must NOT convert 17h into 17 hours (1020 minutes)
+      expect(result.entities.durationMinutes).toBeLessThanOrEqual(60);
+      expect(result.entities.durationMinutes).not.toBe(1020);
+    });
+
+    test('"2,4,6 tôi học toán vào lúc 17h hoặc 5h pm" regression', () => {
+      const result = IntentRouter.classifyDeterministic('2,4,6 tôi học toán vào lúc 17h hoặc 5h pm', {
+        currentDate: '2026-09-16',
+        subjects: [{ id: 'math', name: 'Toán' }]
+      });
+      expect(result.intent).toBe('plan');
+      expect(result.entities.subject).toBe('Toán');
+      expect(result.entities.dates.length).toBe(3);
+      expect(result.entities.targetTime).toBe('17:00');
+      expect(result.entities.durationMinutes).not.toBe(1020);
+    });
+
+    test('"T2 T4 T6 học Lý 1 tiếng lúc 7pm" regression', () => {
+      const result = IntentRouter.classifyDeterministic('T2 T4 T6 học Lý 1 tiếng lúc 7pm', {
+        currentDate: '2026-09-16',
+        subjects: [{ id: 'physics', name: 'Vật lí' }]
+      });
+      expect(result.intent).toBe('plan');
+      expect(result.entities.subject).toBe('Vật lí');
+      expect(result.entities.dates.length).toBe(3);
+      expect(result.entities.durationMinutes).toBe(60);
+      expect(result.entities.targetTime).toBe('19:00');
+    });
   });
 
   describe('Duration Parsing (existing)', () => {

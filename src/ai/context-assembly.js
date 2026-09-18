@@ -14,13 +14,14 @@
   if (typeof module === 'object' && module.exports) {
     const AppDate = require('../utils/date');
     const CapacityEngine = require('./capacity-engine');
-    const exportsObj = factory(AppDate, CapacityEngine);
+    const Clock = require('../utils/clock');
+    const exportsObj = factory(AppDate, CapacityEngine, Clock);
     exportsObj.ContextAssembly = exportsObj;
     module.exports = exportsObj;
   } else {
-    root.ContextAssembly = factory(root.AppDate, root.CapacityEngine);
+    root.ContextAssembly = factory(root.AppDate, root.CapacityEngine, root.AppClock || root.Clock);
   }
-}(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this), function (DateUtil, CapacityEngine) {
+}(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this), function (DateUtil, CapacityEngine, Clock) {
 
   function getToday() {
     return (DateUtil && DateUtil.getTodayAppDate) ? DateUtil.getTodayAppDate() : new Date().toISOString().slice(0, 10);
@@ -68,8 +69,17 @@
    * @returns {Object} Lean, sanitized context
    */
   function buildIntentContext(user, intentType, options = {}) {
-    const today = options.currentDate || getToday();
-    const curTime = options.currentTime || (DateUtil && DateUtil.getCurrentAppTime ? DateUtil.getCurrentAppTime() : new Date().toTimeString().slice(0, 5));
+    const planningTime = (Clock && Clock.getPlanningContext)
+      ? Clock.getPlanningContext(options)
+      : {
+          currentDate: options.currentDate || (DateUtil && DateUtil.getTodayAppDate ? DateUtil.getTodayAppDate() : new Date().toISOString().slice(0, 10)),
+          currentTime: options.currentTime || '08:00',
+          currentInstant: new Date(),
+          timezone: 'Asia/Ho_Chi_Minh'
+        };
+
+    const today = planningTime.currentDate;
+    const curTime = planningTime.currentTime;
     const targetDate = options.targetDate || today;
 
     const baseAvail = (user && user.availability) || { start: '15:00', end: '21:30', days: [1, 2, 3, 4, 5, 6, 0] };
@@ -83,10 +93,11 @@
 
     // Base sanitized context
     const baseContext = {
+      currentInstant: planningTime.currentInstant,
       currentDate: today,
       currentTime: curTime,
       targetDate,
-      timezone: 'Asia/Ho_Chi_Minh',
+      timezone: planningTime.timezone || 'Asia/Ho_Chi_Minh',
       availability: {
         start: baseAvail.start || '15:00',
         end: baseAvail.end || '21:30',

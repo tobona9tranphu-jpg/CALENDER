@@ -3248,178 +3248,38 @@ async function applyFixMyDay(selectedOnly = false) {
 }
 window.applyFixMyDay = applyFixMyDay;
 
+/**
+ * Unified compatibility wrapper for legacy AI ask callers.
+ * Ensures single source of truth: all user AI entry points delegate to
+ * the Unified TimeAssistant pipeline (submitAskAI).
+ */
 async function handleAiAskSubmit() {
-  const diffBox = $('#aiRescheduleDiffBox');
-  if (diffBox) diffBox.hidden = true;
-  const intentBreakdown = $('#aiIntentBreakdown');
-  if (intentBreakdown) intentBreakdown.hidden = false;
-
   const inputEl = $('#aiAskInput');
   const text = (inputEl ? inputEl.value : '').trim();
+  const askWidget = $('#askAIWidget');
+  const mainInput = $('#askAIInput');
+
+  if (askWidget) {
+    askWidget.scrollIntoView({ behavior: 'smooth' });
+  }
+
   if (!text) {
-    toast('Vui lòng nhập yêu cầu của bạn, ví dụ: "Ngày mai học Lý 2 tiếng, làm Anh 1 tiếng, tối 7h đá bóng..."', 'info');
+    if (mainInput) mainInput.focus();
     return;
   }
 
-  const btn = $('#aiAskBtn');
+  if (mainInput) mainInput.value = text;
+  if (inputEl) inputEl.value = '';
+
   const statusPill = $('#aiStatusPill');
-  if (btn) btn.disabled = true;
   if (statusPill) {
-    statusPill.textContent = 'Đang phân tích...';
-    statusPill.style.color = '#c8892c';
+    statusPill.textContent = 'Đang chuyển Ask AI...';
+    setTimeout(() => { if (statusPill) statusPill.textContent = 'Sẵn sàng'; }, 1500);
   }
 
-  try {
-    // Build context with calendar revision for stale protection
-    const context = (typeof PlannerContext !== 'undefined' && PlannerContext.buildPlanningContext)
-      ? PlannerContext.buildPlanningContext(currentUser, TODAY, { horizonDays: 3 })
-      : { currentDate: TODAY, availability: currentUser?.availability || { start: '15:00', end: '21:30' } };
-
-    _currentAiContext = context; // snapshot for live revalidation
-
-    const aiClient = (typeof ClientAIAdapterUtil !== 'undefined' && ClientAIAdapterUtil)
-      ? new ClientAIAdapterUtil()
-      : null;
-
-    let intentRes = null;
-    let planRes = null;
-
-    if (aiClient) {
-      intentRes = await aiClient.parseIntent(text, context);
-      planRes = await aiClient.generatePlan(text, context);
-    } else {
-      const fallback = (typeof DeterministicFallbackProvider !== 'undefined')
-        ? new DeterministicFallbackProvider()
-        : null;
-      if (fallback) {
-        intentRes = await fallback.parseIntent(text, context);
-        planRes = await fallback.generatePlan(text, context);
-      }
-    }
-
-    const intent = (intentRes && intentRes.intent) ? intentRes.intent : null;
-    let proposal = (planRes && planRes.proposal) ? planRes.proposal : null;
-
-    if (!proposal || !Array.isArray(proposal.actions) || proposal.actions.length === 0) {
-      toast('Không tìm thấy hành động lịch trình phù hợp trong câu yêu cầu. Hãy thử miêu tả rõ hơn thời gian hoặc môn học.', 'warning');
-      return;
-    }
-
-    // Embed calendar revision into proposal for stale detection
-    proposal.contextVersion = getCurrentCalendarRevision();
-
-    // Validate
-    const validation = (typeof PlanningProposal !== 'undefined' && PlanningProposal.validatePlanningProposal)
-      ? PlanningProposal.validatePlanningProposal(proposal, context)
-      : { valid: true, warnings: [] };
-
-    // Evaluate quality
-    const quality = (typeof PlanEvaluator !== 'undefined' && PlanEvaluator.evaluatePlanQuality)
-      ? PlanEvaluator.evaluatePlanQuality(proposal, context)
-      : null;
-
-    if (quality) proposal.quality = quality;
-
-    currentAiProposal = proposal;
-    currentAiIntent = intent;
-
-    // Reset stale banner
-    const staleBanner = $('#aiStaleWarningBanner');
-    if (staleBanner) staleBanner.hidden = true;
-
-    // Populate source tag & confidence
-    const sourceTag = $('#aiReviewSourceTag');
-    if (sourceTag) {
-      sourceTag.textContent = proposal.source === 'ai' ? '✦ AI PLANNING (GEMINI)' : '✦ SMART ENGINE (DỰ PHÒNG)';
-    }
-    const confBadge = $('#aiConfidenceBadge');
-    if (confBadge) {
-      const pct = Math.round((proposal.confidence || 0.9) * 100);
-      confBadge.textContent = `Độ tin cậy: ${pct}%`;
-    }
-
-    // Render quality meter
-    renderQualityMeter(quality);
-
-    // Render intent chips
-    const fixedContainer = $('#aiFixedChipsList');
-    const taskContainer = $('#aiTaskChipsList');
-    const fixedGroup = $('#aiFixedChips');
-    const taskGroup = $('#aiTaskChips');
-
-    if (fixedContainer && taskContainer) {
-      const fixedItems = (intent && Array.isArray(intent.fixedEvents)) ? intent.fixedEvents : [];
-      const taskItems = (intent && Array.isArray(intent.tasks)) ? intent.tasks : [];
-
-      if (fixedItems.length > 0) {
-        if (fixedGroup) fixedGroup.hidden = false;
-        fixedContainer.innerHTML = fixedItems.map(f => `
-          <span class="ai-pill-chip fixed-chip">
-            📌 ${escapeHTML(f.title)} (${f.start} - ${f.end})
-          </span>
-        `).join('');
-      } else if (fixedGroup) {
-        fixedGroup.hidden = true;
-      }
-
-      if (taskItems.length > 0) {
-        if (taskGroup) taskGroup.hidden = false;
-        taskContainer.innerHTML = taskItems.map(t => `
-          <span class="ai-pill-chip task-chip">
-            ⏱ ${escapeHTML(t.title)} (${t.durationMinutes}p)
-          </span>
-        `).join('');
-      } else if (taskGroup) {
-        taskGroup.hidden = true;
-      }
-    }
-
-    // Render interactive action cards (P1.2: with edit controls)
-    renderActionCards(proposal.actions);
-
-    // Render rationales
-    const rationaleListEl = $('#aiRationaleList');
-    if (rationaleListEl) {
-      const reasons = Array.isArray(proposal.rationale) ? proposal.rationale : [];
-      if (reasons.length > 0) {
-        rationaleListEl.innerHTML = reasons.map(r =>
-          `<li>${escapeHTML(typeof r === 'string' ? r : (r.reason || ''))}</li>`
-        ).join('');
-      } else {
-        rationaleListEl.innerHTML = '<li>Đã cân đối dựa trên thời gian rảnh và thứ tự ưu tiên của bạn.</li>';
-      }
-    }
-
-    // Render warnings
-    const warningsBox = $('#aiWarningsBox');
-    const warningsList = $('#aiWarningsList');
-    const allWarnings = [
-      ...(Array.isArray(proposal.warnings) ? proposal.warnings : []),
-      ...(Array.isArray(validation.warnings) ? validation.warnings : [])
-    ];
-    if (warningsBox && warningsList) {
-      if (allWarnings.length > 0) {
-        warningsBox.hidden = false;
-        warningsList.innerHTML = allWarnings.map(w =>
-          `<li>${escapeHTML(typeof w === 'string' ? w : (w.message || JSON.stringify(w)))}</li>`
-        ).join('');
-      } else {
-        warningsBox.hidden = true;
-      }
-    }
-
-    openModal('aiPlanReviewModal');
-  } catch (err) {
-    console.error('AI Ask error:', err);
-    toast('Có lỗi xảy ra khi xử lý yêu cầu AI. Vui lòng thử lại.', 'danger');
-  } finally {
-    if (btn) btn.disabled = false;
-    if (statusPill) {
-      statusPill.textContent = 'Sẵn sàng';
-      statusPill.style.color = '';
-    }
-  }
+  await submitAskAI(text);
 }
+
 
 function applyProposedAiPlan() {
   if (!currentAiProposal || !Array.isArray(currentAiProposal.actions) || !currentAiProposal.actions.length) {
@@ -3946,15 +3806,17 @@ async function submitAskAI(query) {
       throw new Error('TimeAssistant engine chưa sẵn sàng.');
     }
 
-    const curTime = DateUtil && DateUtil.getCurrentAppTime
-      ? DateUtil.getCurrentAppTime()
-      : (new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date()));
+    const ClockUtil = (typeof AppClock !== 'undefined' && AppClock) ? AppClock : ((typeof Clock !== 'undefined') ? Clock : null);
+    const planningTime = (ClockUtil && ClockUtil.getPlanningContext)
+      ? ClockUtil.getPlanningContext({ currentDate: TODAY })
+      : { currentDate: TODAY, currentTime: (DateUtil && DateUtil.getCurrentAppTime ? DateUtil.getCurrentAppTime() : '08:00') };
     const clientAIAdapter = (typeof AIProvider !== 'undefined' && AIProvider.ClientAIAdapter) ? new AIProvider.ClientAIAdapter() : null;
 
     const response = await TimeAssistantUtil.handleUserQuery(text, currentUser, {
       aiAdapter: clientAIAdapter,
-      currentDate: TODAY,
-      currentTime: curTime
+      currentInstant: planningTime.currentInstant,
+      currentDate: planningTime.currentDate,
+      currentTime: planningTime.currentTime
     });
 
     let extraHtml = '';
@@ -5040,16 +4902,7 @@ document.addEventListener('click', event => {
   }
 
   if (event.target.closest('#aiAskBtn')) {
-    const inputEl = $('#aiAskInput');
-    const text = (inputEl ? inputEl.value : '').trim();
-    if (text) {
-      const mainInput = $('#askAIInput');
-      if (mainInput) mainInput.value = text;
-      const askWidget = $('#askAIWidget');
-      if (askWidget) askWidget.scrollIntoView({ behavior: 'smooth' });
-      submitAskAI(text);
-      if (inputEl) inputEl.value = '';
-    }
+    handleAiAskSubmit();
   }
 
   if (event.target.closest('#fixMyDayBtn')) {

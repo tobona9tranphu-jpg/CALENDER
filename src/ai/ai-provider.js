@@ -19,7 +19,8 @@
     const PlanningProposal = require('./planning-proposal');
     const QuickCapture = require('../today/quick-capture');
     const TodayEngine = require('../today/today-engine');
-    const exportsObj = factory(AppDate, IntentSchema, PlanningProposal, QuickCapture, TodayEngine);
+    const AIConfig = require('../config/ai');
+    const exportsObj = factory(AppDate, IntentSchema, PlanningProposal, QuickCapture, TodayEngine, AIConfig);
     exportsObj.AIProvider = exportsObj;
     module.exports = exportsObj;
   } else {
@@ -28,7 +29,8 @@
       root.IntentSchema,
       root.PlanningProposal,
       root.QuickCapture,
-      root.TodayEngine
+      root.TodayEngine,
+      root.AIConfig
     );
   }
 }(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this), function (
@@ -36,8 +38,107 @@
   IntentSchemaUtil,
   PlanningProposalUtil,
   QuickCaptureUtil,
-  TodayEngineUtil
+  TodayEngineUtil,
+  AIConfig
 ) {
+
+  /**
+   * Operational Telemetry & AI Health Signal Tracker.
+   * Tracks call volume, success rates, fallbacks, and typed failure reasons.
+   * Zero credential, password, or sensitive calendar payload leakage.
+   */
+  const AITelemetry = {
+    _stats: {
+      aiRequests: 0,
+      aiSuccess: 0,
+      aiFallback: 0,
+      aiFailure: 0,
+      recentEvents: []
+    },
+    record(event = {}) {
+      this._stats.aiRequests++;
+      if (event.source === 'ai') {
+        this._stats.aiSuccess++;
+      } else if (event.source === 'deterministic') {
+        this._stats.aiFallback++;
+      } else {
+        this._stats.aiFailure++;
+      }
+      this._stats.recentEvents.push({
+        source: event.source || 'deterministic',
+        provider: event.provider || (event.source === 'ai' ? 'gemini' : 'deterministic'),
+        failureReason: event.failureReason || null,
+        intent: event.intent || null,
+        timestamp: new Date().toISOString()
+      });
+      if (this._stats.recentEvents.length > 50) {
+        this._stats.recentEvents.shift();
+      }
+    },
+    getHealthSignal() {
+      const total = this._stats.aiRequests;
+      const rate = total > 0 ? Number(((this._stats.aiSuccess / total) * 100).toFixed(1)) : 100.0;
+      return {
+        aiRequests: this._stats.aiRequests,
+        aiSuccess: this._stats.aiSuccess,
+        aiFallback: this._stats.aiFallback,
+        aiFailure: this._stats.aiFailure,
+        aiAvailabilityRate: rate
+      };
+    },
+    getRecentEvents() {
+      return [...this._stats.recentEvents];
+    },
+    reset() {
+      this._stats.aiRequests = 0;
+      this._stats.aiSuccess = 0;
+      this._stats.aiFallback = 0;
+      this._stats.aiFailure = 0;
+      this._stats.recentEvents = [];
+    }
+  };
+
+  /**
+   * Helper for bounded retries with exponential backoff on HTTP 429/503.
+   */
+  async function fetchWithBoundedRetry(url, fetchOptions, retryConfig = {}) {
+    const maxRetries = retryConfig.maxRetries ?? (AIConfig ? AIConfig.RETRY_CONFIG.MAX_RETRIES : 2);
+    const retryableStatuses = retryConfig.retryableStatuses || (AIConfig ? AIConfig.RETRY_CONFIG.RETRYABLE_STATUS_CODES : [429, 503]);
+    let lastResponse = null;
+    let lastError = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await fetch(url, fetchOptions);
+        if (response.ok) {
+          return { ok: true, response };
+        }
+        lastResponse = response;
+        if (retryableStatuses.includes(response.status) && attempt < maxRetries) {
+          const baseDelay = retryConfig.initialDelayMs || (AIConfig ? AIConfig.RETRY_CONFIG.INITIAL_DELAY_MS : 500);
+          const maxDelay = retryConfig.maxDelayMs || (AIConfig ? AIConfig.RETRY_CONFIG.MAX_DELAY_MS : 2000);
+          const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay);
+          await new Promise(res => setTimeout(res, delay));
+          continue;
+        }
+        return { ok: false, response };
+      } catch (err) {
+        lastError = err;
+        if (err.name === 'AbortError') {
+          return { ok: false, error: err, isTimeout: true };
+        }
+        if (attempt < maxRetries) {
+          const baseDelay = retryConfig.initialDelayMs || (AIConfig ? AIConfig.RETRY_CONFIG.INITIAL_DELAY_MS : 500);
+          const maxDelay = retryConfig.maxDelayMs || (AIConfig ? AIConfig.RETRY_CONFIG.MAX_DELAY_MS : 2000);
+          const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay);
+          await new Promise(res => setTimeout(res, delay));
+          continue;
+        }
+        return { ok: false, error: err };
+      }
+    }
+    return { ok: false, response: lastResponse, error: lastError };
+  }
 
   /**
    * Base AI Provider Interface
@@ -246,16 +347,16 @@
    * Runs in Node.js serverless environment using process.env.GEMINI_API_KEY.
    */
   class GeminiServerProvider extends AIProvider {
-    constructor({ apiKey = undefined, model = 'gemini-3.6-flash', timeoutMs = 10000 } = {}) {
+    constructor({ apiKey = undefined, model = undefined, timeoutMs = undefined } = {}) {
       super();
       this.apiKey = (apiKey !== undefined) ? apiKey : (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : null);
-      this.model = model;
-      this.timeoutMs = timeoutMs;
+      this.model = model || (AIConfig ? AIConfig.resolveGeminiModel() : 'gemini-2.0-flash');
+      this.timeoutMs = timeoutMs || (AIConfig ? AIConfig.AI_TIMEOUT_MS : 14000);
     }
 
     async parseIntent(input, context = {}) {
       if (!this.apiKey) {
-        return { status: 'NOT_CONFIGURED', error: 'Máy chủ chưa cấu hình GEMINI_API_KEY.' };
+        return { status: 'NOT_CONFIGURED', errorType: 'AI_PROVIDER_UNAVAILABLE', error: 'Máy chủ chưa cấu hình GEMINI_API_KEY.' };
       }
 
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
@@ -279,7 +380,7 @@ Quy tắc:
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
       try {
-        const response = await fetch(endpoint, {
+        const fetchResult = await fetchWithBoundedRetry(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal: controller.signal,
@@ -288,18 +389,27 @@ Quy tắc:
             contents: [{ role: 'user', parts: [{ text: input }] }],
             generationConfig: { temperature: 0, responseMimeType: 'application/json' }
           })
-        });
+        }, AIConfig ? AIConfig.RETRY_CONFIG : {});
 
         clearTimeout(timer);
 
-        if (!response.ok) {
-          return { status: 'UNAVAILABLE', error: `Gemini API returned HTTP ${response.status}` };
+        if (fetchResult.isTimeout) {
+          return { status: 'TIMEOUT', errorType: 'AI_TIMEOUT', error: 'Yêu cầu AI quá thời gian (timeout).' };
         }
 
-        const data = await response.json();
+        if (!fetchResult.ok || !fetchResult.response || !fetchResult.response.ok) {
+          const st = fetchResult.response ? fetchResult.response.status : 503;
+          let errType = 'AI_PROVIDER_UNAVAILABLE';
+          if (st === 429) errType = 'AI_RATE_LIMIT';
+          else if (st === 404) errType = 'AI_MODEL_NOT_FOUND';
+          else if (st === 400) errType = 'AI_INVALID_RESPONSE';
+          return { status: 'UNAVAILABLE', errorType: errType, error: `Gemini API returned HTTP ${st}` };
+        }
+
+        const data = await fetchResult.response.json();
         const text = data?.candidates?.[0]?.content?.parts?.find(p => typeof p.text === 'string')?.text;
         if (!text) {
-          return { status: 'MALFORMED_OUTPUT', error: 'Empty candidate from Gemini.' };
+          return { status: 'MALFORMED_OUTPUT', errorType: 'AI_INVALID_RESPONSE', error: 'Empty candidate from Gemini.' };
         }
 
         const parsed = JSON.parse(text);
@@ -311,26 +421,29 @@ Quy tắc:
 
         const validation = IntentSchemaUtil.validateIntent(intent);
         if (!validation.valid) {
-          return { status: 'INVALID_SCHEMA', errors: validation.errors, intent };
+          return { status: 'INVALID_SCHEMA', errorType: 'AI_SCHEMA_ERROR', errors: validation.errors, intent };
         }
 
-        return { status: 'SUCCESS', source: 'ai', intent };
+        return { status: 'SUCCESS', source: 'ai', provider: 'gemini', model: this.model, intent };
       } catch (err) {
         clearTimeout(timer);
         const isTimeout = err.name === 'AbortError';
         return {
           status: isTimeout ? 'TIMEOUT' : 'ERROR',
+          errorType: isTimeout ? 'AI_TIMEOUT' : 'AI_PROVIDER_UNAVAILABLE',
           error: isTimeout ? 'Yêu cầu AI quá thời gian (timeout).' : err.message
         };
       }
     }
 
+    /**
+     * @deprecated Legacy schedule generation. New UI uses TimeAssistant + CapabilityRouter deterministic engines.
+     */
     async generatePlan(input, context = {}) {
       if (!this.apiKey) {
-        return { status: 'NOT_CONFIGURED', error: 'Máy chủ chưa cấu hình GEMINI_API_KEY.' };
+        return { status: 'NOT_CONFIGURED', errorType: 'AI_PROVIDER_UNAVAILABLE', error: 'Máy chủ chưa cấu hình GEMINI_API_KEY.' };
       }
 
-      // Can be extended in P1.2; for P1.1 foundation, uses prompt template with JSON output
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
 
       const systemInstruction = `Bạn là trợ lý AI lập kế hoạch học tập. Hãy dựa vào khung giờ rảnh và lịch cố định để đề xuất lịch học phù hợp.
@@ -346,7 +459,7 @@ Trả về duy nhất JSON:
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
       try {
-        const response = await fetch(endpoint, {
+        const fetchResult = await fetchWithBoundedRetry(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal: controller.signal,
@@ -358,18 +471,26 @@ Trả về duy nhất JSON:
             }],
             generationConfig: { temperature: 0, responseMimeType: 'application/json' }
           })
-        });
+        }, AIConfig ? AIConfig.RETRY_CONFIG : {});
 
         clearTimeout(timer);
 
-        if (!response.ok) {
-          return { status: 'UNAVAILABLE', error: `Gemini API returned HTTP ${response.status}` };
+        if (fetchResult.isTimeout) {
+          return { status: 'TIMEOUT', errorType: 'AI_TIMEOUT', error: 'Yêu cầu AI quá thời gian (timeout).' };
         }
 
-        const data = await response.json();
+        if (!fetchResult.ok || !fetchResult.response || !fetchResult.response.ok) {
+          const st = fetchResult.response ? fetchResult.response.status : 503;
+          let errType = 'AI_PROVIDER_UNAVAILABLE';
+          if (st === 429) errType = 'AI_RATE_LIMIT';
+          else if (st === 404) errType = 'AI_MODEL_NOT_FOUND';
+          return { status: 'UNAVAILABLE', errorType: errType, error: `Gemini API returned HTTP ${st}` };
+        }
+
+        const data = await fetchResult.response.json();
         const text = data?.candidates?.[0]?.content?.parts?.find(p => typeof p.text === 'string')?.text;
         if (!text) {
-          return { status: 'MALFORMED_OUTPUT', error: 'Empty output from Gemini.' };
+          return { status: 'MALFORMED_OUTPUT', errorType: 'AI_INVALID_RESPONSE', error: 'Empty output from Gemini.' };
         }
 
         const parsed = JSON.parse(text);
@@ -378,16 +499,21 @@ Trả về duy nhất JSON:
           source: 'ai'
         });
 
-        return { status: 'SUCCESS', source: 'ai', proposal };
+        return { status: 'SUCCESS', source: 'ai', provider: 'gemini', model: this.model, proposal };
       } catch (err) {
         clearTimeout(timer);
-        return { status: err.name === 'AbortError' ? 'TIMEOUT' : 'ERROR', error: err.message };
+        const isTimeout = err.name === 'AbortError';
+        return {
+          status: isTimeout ? 'TIMEOUT' : 'ERROR',
+          errorType: isTimeout ? 'AI_TIMEOUT' : 'AI_PROVIDER_UNAVAILABLE',
+          error: err.message
+        };
       }
     }
 
     async parseAssistantIntent(input, context = {}) {
       if (!this.apiKey) {
-        return { status: 'NOT_CONFIGURED', error: 'Máy chủ chưa cấu hình GEMINI_API_KEY.' };
+        return { status: 'NOT_CONFIGURED', errorType: 'AI_PROVIDER_UNAVAILABLE', error: 'Máy chủ chưa cấu hình GEMINI_API_KEY.' };
       }
 
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent?key=${encodeURIComponent(this.apiKey)}`;
@@ -426,7 +552,7 @@ Ngày hiện tại: ${context.currentDate || new Date().toISOString().slice(0, 1
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
       try {
-        const response = await fetch(endpoint, {
+        const fetchResult = await fetchWithBoundedRetry(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal: controller.signal,
@@ -435,27 +561,41 @@ Ngày hiện tại: ${context.currentDate || new Date().toISOString().slice(0, 1
             contents: [{ role: 'user', parts: [{ text: input }] }],
             generationConfig: { temperature: 0, responseMimeType: 'application/json' }
           })
-        });
+        }, AIConfig ? AIConfig.RETRY_CONFIG : {});
 
         clearTimeout(timer);
 
-        if (!response.ok) {
-          return { status: 'UNAVAILABLE', error: `Gemini API returned HTTP ${response.status}` };
+        if (fetchResult.isTimeout) {
+          return { status: 'TIMEOUT', errorType: 'AI_TIMEOUT', error: 'Yêu cầu AI quá thời gian (timeout).' };
         }
 
-        const data = await response.json();
+        if (!fetchResult.ok || !fetchResult.response || !fetchResult.response.ok) {
+          const st = fetchResult.response ? fetchResult.response.status : 503;
+          let errType = 'AI_PROVIDER_UNAVAILABLE';
+          if (st === 429) errType = 'AI_RATE_LIMIT';
+          else if (st === 404) errType = 'AI_MODEL_NOT_FOUND';
+          else if (st === 400) errType = 'AI_INVALID_RESPONSE';
+          return { status: 'UNAVAILABLE', errorType: errType, error: `Gemini API returned HTTP ${st}` };
+        }
+
+        const data = await fetchResult.response.json();
         const text = data?.candidates?.[0]?.content?.parts?.find(p => typeof p.text === 'string')?.text;
         if (!text) {
-          return { status: 'MALFORMED_OUTPUT', error: 'Empty candidate from Gemini.' };
+          return { status: 'MALFORMED_OUTPUT', errorType: 'AI_INVALID_RESPONSE', error: 'Empty candidate from Gemini.' };
         }
 
         const parsed = JSON.parse(text);
-        return { status: 'SUCCESS', source: 'ai', intent: parsed };
+        if (!parsed || !parsed.intent) {
+          return { status: 'INVALID_SCHEMA', errorType: 'AI_SCHEMA_ERROR', error: 'Intent output format invalid.' };
+        }
+
+        return { status: 'SUCCESS', source: 'ai', provider: 'gemini', model: this.model, intent: parsed };
       } catch (err) {
         clearTimeout(timer);
         const isTimeout = err.name === 'AbortError';
         return {
           status: isTimeout ? 'TIMEOUT' : 'ERROR',
+          errorType: isTimeout ? 'AI_TIMEOUT' : 'AI_PROVIDER_UNAVAILABLE',
           error: isTimeout ? 'Yêu cầu AI quá thời gian (timeout).' : err.message
         };
       }
@@ -567,7 +707,14 @@ Ngày hiện tại: ${context.currentDate || new Date().toISOString().slice(0, 1
 
     async parseAssistantIntent(input, context = {}) {
       if (typeof window !== 'undefined' && (window.location.protocol === 'file:' || (typeof isOfflineMode === 'function' && isOfflineMode()))) {
-        return this.fallback.parseAssistantIntent(input, context);
+        const fallbackRes = await this.fallback.parseAssistantIntent(input, context);
+        AITelemetry.record({ source: 'deterministic', provider: 'deterministic', failureReason: 'OFFLINE_MODE', intent: fallbackRes.intent?.intent });
+        return {
+          ...fallbackRes,
+          source: 'deterministic',
+          provider: 'deterministic',
+          fallbackReason: 'OFFLINE_MODE'
+        };
       }
 
       const controller = new AbortController();
@@ -589,22 +736,60 @@ Ngày hiện tại: ${context.currentDate || new Date().toISOString().slice(0, 1
         clearTimeout(timer);
 
         if (!response.ok) {
-          return this.fallback.parseAssistantIntent(input, context);
+          const fallbackRes = await this.fallback.parseAssistantIntent(input, context);
+          const reason = response.status === 503 ? 'AI_PROVIDER_UNAVAILABLE' : (response.status === 429 ? 'AI_RATE_LIMIT' : `HTTP_${response.status}`);
+          AITelemetry.record({ source: 'deterministic', provider: 'deterministic', failureReason: reason, intent: fallbackRes.intent?.intent });
+          return {
+            ...fallbackRes,
+            source: 'deterministic',
+            provider: 'deterministic',
+            fallbackReason: reason
+          };
         }
 
         const data = await response.json();
         if (data.ok && data.intent) {
-          return {
-            status: 'SUCCESS',
-            source: data.source || 'ai',
-            intent: data.intent
-          };
+          if (data.source === 'ai') {
+            AITelemetry.record({ source: 'ai', provider: data.provider || 'gemini', intent: data.intent?.intent });
+            return {
+              status: 'SUCCESS',
+              source: 'ai',
+              provider: data.provider || 'gemini',
+              model: data.model,
+              intent: data.intent
+            };
+          } else {
+            // Server-side fallback occurred
+            AITelemetry.record({ source: 'deterministic', provider: 'deterministic', failureReason: data.fallbackReason || 'SERVER_FALLBACK', intent: data.intent?.intent });
+            return {
+              status: 'SUCCESS',
+              source: 'deterministic',
+              provider: 'deterministic',
+              fallbackReason: data.fallbackReason || 'SERVER_FALLBACK',
+              intent: data.intent
+            };
+          }
         }
 
-        return this.fallback.parseAssistantIntent(input, context);
-      } catch {
+        const fallbackRes = await this.fallback.parseAssistantIntent(input, context);
+        AITelemetry.record({ source: 'deterministic', provider: 'deterministic', failureReason: data.fallbackReason || 'AI_INVALID_RESPONSE', intent: fallbackRes.intent?.intent });
+        return {
+          ...fallbackRes,
+          source: 'deterministic',
+          provider: 'deterministic',
+          fallbackReason: data.fallbackReason || 'AI_INVALID_RESPONSE'
+        };
+      } catch (err) {
         clearTimeout(timer);
-        return this.fallback.parseAssistantIntent(input, context);
+        const reason = (err && err.name === 'AbortError') ? 'AI_TIMEOUT' : 'AI_PROVIDER_UNAVAILABLE';
+        const fallbackRes = await this.fallback.parseAssistantIntent(input, context);
+        AITelemetry.record({ source: 'deterministic', provider: 'deterministic', failureReason: reason, intent: fallbackRes.intent?.intent });
+        return {
+          ...fallbackRes,
+          source: 'deterministic',
+          provider: 'deterministic',
+          fallbackReason: reason
+        };
       }
     }
 
@@ -615,6 +800,7 @@ Ngày hiện tại: ${context.currentDate || new Date().toISOString().slice(0, 1
     PlaceholderAIProvider,
     DeterministicFallbackProvider,
     GeminiServerProvider,
-    ClientAIAdapter
+    ClientAIAdapter,
+    AITelemetry
   };
 }));

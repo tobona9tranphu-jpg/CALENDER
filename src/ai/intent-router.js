@@ -152,27 +152,41 @@
   /**
    * Extracts duration in minutes from Vietnamese text.
    * e.g., "2 tiếng", "1.5 giờ", "90 phút", "45p", "1h30"
+   * CRITICAL: Must NOT mistake start-of-day clock times (e.g., "lúc 17h", "17h", "7h sáng") as durations.
    */
   function parseDurationMinutes(text) {
     const lower = (text || '').toLowerCase();
 
+    // 1. Strip out explicit time-of-day phrases like "lúc 17h", "vào lúc 17h", "vào 17h", "lúc 7 giờ tối", "7h tối", "5pm", etc.
+    let cleanText = lower
+      .replace(/(?:vào\s*lúc|lúc|vào|từ|đến)\s*\d{1,2}(?::\d{2})?\s*(?:h\b|giờ)?(?:\s*(?:sáng|trưa|chiều|tối|đêm))?/gi, ' ')
+      .replace(/\d{1,2}\s*(?:am|pm)/gi, ' ')
+      .replace(/\d{1,2}\s*giờ\s*(?:sáng|trưa|chiều|tối|đêm)/gi, ' ')
+      .replace(/\b(?:1[0-9]|2[0-3]|[7-9])\s*h\b/gi, ' '); // Standalone >= 7h is clock time (17h = 17:00), not duration
+
     // "1h30" or "1h 30m"
-    const compoundMatch = lower.match(/(\d+)\s*h\s*(\d+)\s*(?:p|m|phút)?/);
+    const compoundMatch = cleanText.match(/(\d+)\s*h\s*(\d+)\s*(?:p|m|phút)?/);
     if (compoundMatch) {
       return Number(compoundMatch[1]) * 60 + Number(compoundMatch[2]);
     }
 
     // "2 tiếng", "2 giờ", "1.5 tiếng"
-    const hoursMatch = lower.match(/(\d+(?:[.,]\d+)?)\s*(?:tiếng|giờ|h\b)/);
+    const hoursMatch = cleanText.match(/(\d+(?:[.,]\d+)?)\s*(?:tiếng|giờ)/);
     if (hoursMatch) {
       const h = parseFloat(hoursMatch[1].replace(',', '.'));
       return Math.round(h * 60);
     }
 
     // "90 phút", "45p", "45 m"
-    const minsMatch = lower.match(/(\d+)\s*(?:phút|p\b|m\b)/);
+    const minsMatch = cleanText.match(/(\d+)\s*(?:phút|p\b|m\b)/);
     if (minsMatch) {
       return parseInt(minsMatch[1], 10);
+    }
+
+    // "2h" or "1h" (short duration <= 6h)
+    const shortHMatch = cleanText.match(/\b([1-6])\s*h\b/);
+    if (shortHMatch) {
+      return parseInt(shortHMatch[1], 10) * 60;
     }
 
     return null;
@@ -211,8 +225,8 @@
       }
     }
 
-    // Also check for T2/T4/T6 style
-    const tStyleMatch = lower.match(/t([2-7])(?:\s*[,/]\s*t([2-7]))+/gi);
+    // Also check for T2/T4/T6 style (e.g. "T2, T4, T6" or "T2 T4 T6" or "T2/T4/T6")
+    const tStyleMatch = lower.match(/t([2-7])(?:\s*[,/]?\s*t([2-7]))+/gi);
     if (tStyleMatch && dates.length === 0) {
       for (const match of tStyleMatch) {
         const nums = match.match(/\d/g).map(Number);
@@ -249,7 +263,7 @@
     const lower = (text || '').toLowerCase();
 
     // Explicit HH:MM: "15:00", "lúc 17:30"
-    const explicitMatch = lower.match(/(\d{1,2}):(\d{2})/);
+    const explicitMatch = lower.match(/\b(\d{1,2}):(\d{2})\b/);
     if (explicitMatch) {
       const h = parseInt(explicitMatch[1], 10);
       const m = parseInt(explicitMatch[2], 10);
@@ -258,8 +272,17 @@
       }
     }
 
-    // "17h", "17h30", "7h30"
-    const hMatch = lower.match(/(\d{1,2})\s*h\s*(\d{1,2})?/);
+    // "5pm", "5 pm", "5am", "5h pm"
+    const ampmMatch = lower.match(/\b(\d{1,2})\s*(?:h\s*)?(am|pm)\b/);
+    if (ampmMatch) {
+      let h = parseInt(ampmMatch[1], 10);
+      if (ampmMatch[2] === 'pm' && h < 12) h += 12;
+      if (ampmMatch[2] === 'am' && h === 12) h = 0;
+      return String(h).padStart(2, '0') + ':00';
+    }
+
+    // "17h", "17h30", "7h30" (must have word boundary so "t6 học" is not treated as 6h)
+    const hMatch = lower.match(/\b(\d{1,2})\s*h(?:\s*(\d{1,2})\b|\b)/);
     if (hMatch) {
       let h = parseInt(hMatch[1], 10);
       const m = hMatch[2] ? parseInt(hMatch[2], 10) : 0;
@@ -269,15 +292,6 @@
       if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
         return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
       }
-    }
-
-    // "5pm", "5 pm", "5am"
-    const ampmMatch = lower.match(/(\d{1,2})\s*(am|pm)/);
-    if (ampmMatch) {
-      let h = parseInt(ampmMatch[1], 10);
-      if (ampmMatch[2] === 'pm' && h < 12) h += 12;
-      if (ampmMatch[2] === 'am' && h === 12) h = 0;
-      return String(h).padStart(2, '0') + ':00';
     }
 
     // "7 giờ tối" / "3 giờ chiều" / "9 giờ sáng"
@@ -595,13 +609,14 @@
 
     // 9. Plan (Default for study request)
     const planDates = multiDates.length > 0 ? multiDates : (dateRef ? [dateRef] : [baseDate]);
+    const isMultiDayOrTimed = (multiDates.length > 1) || Boolean(targetTime);
     return {
       intent: 'plan',
       confidence: (subject || duration || dateRef || targetTime) ? 0.85 : 0.60,
       entities: {
         subject: subject || (raw.length < 30 ? raw : 'Học tập'),
         taskTitle: subject ? `Học ${subject}` : raw,
-        durationMinutes: duration || null,
+        durationMinutes: duration || (isMultiDayOrTimed ? 60 : null),
         date: planDates[0],
         dates: planDates.length > 1 ? planDates : undefined,
         targetTime: targetTime || null,
@@ -634,14 +649,18 @@
     // For 'plan', if duration is missing and no learned preference exists
     if (intentType === 'plan') {
       if (!entities.durationMinutes) {
-        const subId = entities.subject;
-        const learnedMult = userPreferences.durationMultipliers && subId ? userPreferences.durationMultipliers[subId] : null;
-        if (!learnedMult) {
-          return {
-            needsClarification: true,
-            missingField: 'durationMinutes',
-            question: `Bạn muốn dành khoảng bao lâu cho môn ${entities.subject || 'này'}? (Ví dụ: 45 phút, 1.5 tiếng)`
-          };
+        if (entities.targetTime || entities.recurrence || (entities.dates && entities.dates.length > 1)) {
+          entities.durationMinutes = 60;
+        } else {
+          const subId = entities.subject;
+          const learnedMult = userPreferences.durationMultipliers && subId ? userPreferences.durationMultipliers[subId] : null;
+          if (!learnedMult) {
+            return {
+              needsClarification: true,
+              missingField: 'durationMinutes',
+              question: `Bạn muốn dành khoảng bao lâu cho môn ${entities.subject || 'này'}? (Ví dụ: 45 phút, 1.5 tiếng)`
+            };
+          }
         }
       }
     }

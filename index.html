@@ -93,11 +93,11 @@
             </div>
           </div>
 
-          <!-- 2b. ASK CALENDAR (AI PERSONAL TIME ASSISTANT) -->
+          <!-- 2b. ASK CALENDAR (LAUNCHER INTO UNIFIED ASK AI) -->
           <div class="ai-ask-card" id="aiAskCard">
             <div class="ai-ask-header">
               <span class="ai-sparkle">✦</span>
-              <span class="ai-ask-kicker">AI TIME ASSISTANT</span>
+              <span class="ai-ask-kicker">✦ ASK AI (TRỢ LÝ THỜI GIAN)</span>
               <span class="ai-status-pill" id="aiStatusPill">Sẵn sàng</span>
             </div>
             <form class="ai-ask-form" id="aiAskForm" onsubmit="return false;">
@@ -109,13 +109,13 @@
                   placeholder="Hỏi hoặc xếp lịch: &quot;Ngày mai học Lý 2 tiếng, làm Anh 1 tiếng, tối 7h đá bóng...&quot;"
                   autocomplete="off"
                 />
-                <button type="button" class="primary-button ai-submit-btn" id="aiAskBtn" title="Phân tích & Lập kế hoạch">
-                  <span>✦ Lên lịch</span>
+                <button type="button" class="primary-button ai-submit-btn" id="aiAskBtn" title="Hỏi Trợ lý Thời gian (Ask AI)">
+                  <span>✦ Hỏi AI</span>
                 </button>
               </div>
             </form>
             <div class="ai-ask-hint">
-              <span>Gợi ý: Nhập ngôn ngữ tự nhiên để AI phân tích và đề xuất lịch học tối ưu trước khi áp dụng.</span>
+              <span>Nhập câu hỏi hoặc yêu cầu xếp lịch để bắt đầu trò chuyện với Trợ lý Thời gian Ask AI bên dưới.</span>
             </div>
           </div>
 
@@ -966,6 +966,8 @@
     <div id="toastContainer" class="tb-toast-container" aria-label="Thông báo hệ thống"></div>
     <div class="toast" id="toast" role="status" style="display:none;"></div>
     <script src="./src/utils/date.js"></script>
+    <script src="./src/utils/clock.js"></script>
+    <script src="./src/config/ai.js"></script>
     <script src="./src/recurrence/recurrence-engine.js"></script>
     <script src="./src/recurrence/data-integrity.js"></script>
     <script src="./src/notifications/notification-types.js"></script>

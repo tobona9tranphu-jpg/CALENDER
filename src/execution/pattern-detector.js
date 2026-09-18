@@ -11,7 +11,9 @@
  *
  * Requirements:
  * - Minimum sample size threshold (N >= 3) to prevent noisy single-case hallucinations.
- * - Confidence score (0.0 to 1.0) mathematically calculated from evidence.
+ * - Confidence score (0.0 to 1.0) is a deterministic HEURISTIC score based on sample size
+ *   and rule consistency (NOT a calibrated statistical probability).
+ * - Always includes sampleSize and empirical evidence breakdown.
  */
 
 (function (root, factory) {
@@ -109,6 +111,7 @@
           patterns.push({
             type: 'late_start_pattern',
             confidence,
+            confidenceType: 'heuristic',
             sampleSize: g.total,
             window: wKey,
             windowLabel: g.label,
@@ -178,6 +181,7 @@
           patterns.push({
             type: 'duration_underestimate_pattern',
             confidence,
+            confidenceType: 'heuristic',
             sampleSize: sd.samples,
             subjectId: subId,
             evidence: {
@@ -225,6 +229,7 @@
           patterns.push({
             type: 'underperforming_time_block_pattern',
             confidence,
+            confidenceType: 'heuristic',
             sampleSize: bp.total,
             timeBlock: bp.block,
             evidence: {

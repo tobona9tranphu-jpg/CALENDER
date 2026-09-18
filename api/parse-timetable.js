@@ -1,6 +1,7 @@
 const { send, readBody, preflight } = require('../lib/http');
+const { resolveGeminiModel } = require('../src/config/ai');
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+const GEMINI_MODEL = resolveGeminiModel();
 const TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 function validationError(message) {

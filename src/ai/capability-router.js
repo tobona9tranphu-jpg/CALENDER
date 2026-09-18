@@ -114,6 +114,28 @@
 
     const candidateSlots = [];
 
+    // If explicit targetTime requested, check if it fits into an existing gap
+    const targetStartMin = request.targetTime ? minFromTime(request.targetTime) : null;
+    if (targetStartMin !== null) {
+      const targetEndMin = targetStartMin + dur;
+      const matchingGap = rawGaps.find(g => g.startMin <= targetStartMin && g.endMin >= targetEndMin);
+      if (matchingGap) {
+        candidateSlots.push({
+          start: timeFromMin(targetStartMin),
+          end: timeFromMin(targetEndMin),
+          startMin: targetStartMin,
+          endMin: targetEndMin,
+          durationMinutes: dur,
+          gapTotalMinutes: matchingGap.durationMinutes,
+          timeOfDay: targetStartMin < 720 ? 'morning' : (targetStartMin < 1080 ? 'afternoon' : 'evening'),
+          suitabilityScore: 100,
+          available: true,
+          conflicts: [],
+          deadlineImpact: 'safe'
+        });
+      }
+    }
+
     // Filter gaps that can fit the requested duration
     rawGaps.forEach(gap => {
       if (gap.durationMinutes >= dur) {
@@ -630,7 +652,8 @@
             durationMinutes: dur,
             date: planDate,
             timePreference: entities.timePreference,
-            subject: sub
+            subject: sub,
+            targetTime: entities.targetTime
           }, context);
 
           if (slotResult.slots.length > 0) {

@@ -2,9 +2,11 @@
 
 const { send, readBody, preflight } = require('../lib/http');
 const { getUserId } = require('../lib/auth');
-const { GeminiServerProvider, DeterministicFallbackProvider } = require('../src/ai/ai-provider');
+const { GeminiServerProvider, DeterministicFallbackProvider, AITelemetry } = require('../src/ai/ai-provider');
 const { generateReschedulePlan } = require('../src/ai/reschedule-engine');
 const AppDate = require('../src/utils/date');
+const Clock = require('../src/utils/clock');
+const AIConfig = require('../src/config/ai');
 
 /**
  * Serverless handler for /api/ai
@@ -31,19 +33,33 @@ module.exports = async function handler(req, res) {
     const body = await readBody(req);
     const { action = 'generate_plan', input, context = {} } = body || {};
 
+    // Lightweight operational health check endpoint
+    if (action === 'health') {
+      const signal = AITelemetry ? AITelemetry.getHealthSignal() : {};
+      const configuredModel = AIConfig.resolveGeminiModel();
+      return send(res, 200, {
+        ok: true,
+        configuredModel,
+        hasApiKey: !!process.env.GEMINI_API_KEY,
+        telemetry: signal
+      });
+    }
+
     if (!input) {
       return send(res, 400, { ok: false, error: 'Thiếu nội dung yêu cầu.' });
     }
 
-    // Resolve current date: prefer valid client-supplied date, then server-side Vietnam time
-    const clientDate = typeof context.currentDate === 'string' ? context.currentDate : null;
-    const isValidDate = clientDate && /^\d{4}-\d{2}-\d{2}$/.test(clientDate);
-    const resolvedDate = isValidDate ? clientDate : (AppDate && AppDate.getTodayAppDate ? AppDate.getTodayAppDate() : new Date().toISOString().slice(0, 10));
+    // Resolve unified planning context via Clock (avoids half-injected date/time bugs)
+    const planningTime = Clock.getPlanningContext({
+      currentDate: typeof context.currentDate === 'string' ? context.currentDate : undefined,
+      currentTime: typeof context.currentTime === 'string' ? context.currentTime : undefined
+    });
 
     // Ensure context is sanitized: whitelist only schedule-relevant attributes
     const sanitizedContext = {
-      currentDate: resolvedDate,
-      currentTime: typeof context.currentTime === 'string' ? context.currentTime : null,
+      currentInstant: planningTime.currentInstant,
+      currentDate: planningTime.currentDate,
+      currentTime: planningTime.currentTime,
       timezone: 'Asia/Ho_Chi_Minh',
       availability: context.availability || { start: '15:00', end: '21:30' },
       fixedEvents: Array.isArray(context.fixedEvents) ? context.fixedEvents.map(e => ({
@@ -72,19 +88,39 @@ module.exports = async function handler(req, res) {
     };
 
     const apiKey = process.env.GEMINI_API_KEY;
+    const configuredModel = AIConfig.resolveGeminiModel();
+    const modelValidation = AIConfig.validateGeminiModel(configuredModel);
+    if (!modelValidation.valid) {
+      console.warn(`[API /api/ai] Model validation warning: ${modelValidation.error}`);
+    }
+
     if (!apiKey) {
-      // 503 Service Unavailable — server is not configured to handle AI requests
+      // 503 Service Unavailable — server is not configured to handle live Gemini AI requests
+      // Check if caller can take deterministic fallback directly
+      if (action === 'ask_assistant') {
+        const fallback = new DeterministicFallbackProvider();
+        const fallbackResult = await fallback.parseAssistantIntent(input, sanitizedContext);
+        return send(res, 200, {
+          ok: true,
+          source: 'deterministic',
+          provider: 'deterministic',
+          fallbackReason: AIConfig.AI_ERROR_TYPES.PROVIDER_UNAVAILABLE,
+          intent: fallbackResult ? fallbackResult.intent : null
+        });
+      }
+
       return send(res, 503, {
         ok: false,
         status: 'NOT_CONFIGURED',
+        errorType: AIConfig.AI_ERROR_TYPES.PROVIDER_UNAVAILABLE,
         message: 'Máy chủ chưa cấu hình GEMINI_API_KEY.'
       });
     }
 
     const provider = new GeminiServerProvider({
       apiKey,
-      model: process.env.GEMINI_MODEL || 'gemini-3.6-flash',
-      timeoutMs: 14000
+      model: configuredModel,
+      timeoutMs: AIConfig.AI_TIMEOUT_MS
     });
 
     const fallback = new DeterministicFallbackProvider();
@@ -92,14 +128,15 @@ module.exports = async function handler(req, res) {
     if (action === 'parse_intent') {
       const result = await provider.parseIntent(input, sanitizedContext);
       if (result.status === 'SUCCESS') {
-        return send(res, 200, { ok: true, source: 'ai', intent: result.intent });
+        return send(res, 200, { ok: true, source: 'ai', provider: 'gemini', model: configuredModel, intent: result.intent });
       }
       // Fall back to deterministic intent parser
       const fallbackResult = await fallback.parseIntent(input, sanitizedContext);
       return send(res, 200, {
         ok: true,
         source: 'deterministic',
-        fallbackReason: result.status,
+        provider: 'deterministic',
+        fallbackReason: result.errorType || result.status,
         intent: fallbackResult.intent
       });
     }
@@ -107,14 +144,15 @@ module.exports = async function handler(req, res) {
     if (action === 'generate_plan') {
       const result = await provider.generatePlan(input, sanitizedContext);
       if (result.status === 'SUCCESS') {
-        return send(res, 200, { ok: true, source: 'ai', proposal: result.proposal });
+        return send(res, 200, { ok: true, source: 'ai', provider: 'gemini', model: configuredModel, proposal: result.proposal });
       }
       // Fall back to deterministic plan scheduler
       const fallbackResult = await fallback.generatePlan(input, sanitizedContext);
       return send(res, 200, {
         ok: true,
         source: 'deterministic',
-        fallbackReason: result.status,
+        provider: 'deterministic',
+        fallbackReason: result.errorType || result.status,
         proposal: fallbackResult.proposal
       });
     }
@@ -125,18 +163,19 @@ module.exports = async function handler(req, res) {
         try {
           result = await provider.parseAssistantIntent(input, sanitizedContext);
         } catch (e) {
-          result = { status: 'ERROR', error: e.message };
+          result = { status: 'ERROR', errorType: AIConfig.AI_ERROR_TYPES.PROVIDER_UNAVAILABLE, error: e.message };
         }
       }
       if (result && result.status === 'SUCCESS') {
-        return send(res, 200, { ok: true, source: 'ai', intent: result.intent });
+        return send(res, 200, { ok: true, source: 'ai', provider: 'gemini', model: configuredModel, intent: result.intent });
       }
       // Fall back to deterministic intent parser
       const fallbackResult = await fallback.parseAssistantIntent(input, sanitizedContext);
       return send(res, 200, {
         ok: true,
         source: 'deterministic',
-        fallbackReason: result ? result.status : 'FALLBACK',
+        provider: 'deterministic',
+        fallbackReason: (result && (result.errorType || result.status)) || AIConfig.AI_ERROR_TYPES.PROVIDER_UNAVAILABLE,
         intent: fallbackResult ? fallbackResult.intent : null
       });
     }
@@ -148,7 +187,8 @@ module.exports = async function handler(req, res) {
       });
       return send(res, 200, {
         ok: true,
-        source: 'smart_engine',
+        source: 'deterministic',
+        provider: 'reschedule_engine',
         proposal
       });
     }

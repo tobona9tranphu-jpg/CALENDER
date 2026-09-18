@@ -6,6 +6,7 @@
     "start": "node src/server/expressServer.js",
     "dev": "nodemon src/server/expressServer.js",
     "test": "jest",
+    "check-model": "node scripts/check-model.js",
     "seed:demo": "node scripts/seed-demo-account.js"
   },
   "dependencies": {
